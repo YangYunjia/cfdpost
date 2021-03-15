@@ -11,6 +11,11 @@ from scipy.interpolate import interp1d
 class PhysicalSec():
     '''
     Extracting flow features of a section (features on/near the wall)
+
+    Remark (Yang)
+    ---
+    static method are used to process field data, while class objuct only accept
+    data distribution on the surface
     '''
     _i  = 0     # index of the mesh point
     _X  = 0.0   # location of the feature location
@@ -98,11 +103,11 @@ class PhysicalSec():
         y_  = np.append(self.y[iLE:0:-1], self.y[0])
         gl  = interp1d(x_, y_, kind='cubic')
 
-        self.xx = np.arange(0.0, 1.0, 0.001)
-        self.yu = gu(self.xx)
-        self.yl = gl(self.xx)
-        self.mu = fmw(self.xx)
-        self.hu = fhu(self.xx)
+        self.normX = np.arange(0.0, 1.0, 0.001)
+        self.yu = gu(self.normX)
+        self.yl = gl(self.normX)
+        self.mu = fmw(self.normX)
+        self.hu = fhu(self.normX)
         
         self.iLE = iLE
 
@@ -119,8 +124,8 @@ class PhysicalSec():
         self.iLE = iLE
 
         fmw = interp1d(self.x[iLE:], self.Mw[iLE:], kind='cubic')
-        self.xx = np.arange(0.0, 1.0, 0.001)
-        self.mu = fmw(self.xx)
+        self.normX = np.arange(0.0, 1.0, 0.001)
+        self.mu = fmw(self.normX)
 
     @property
     def n_point(self):
@@ -494,7 +499,7 @@ class PhysicalSec():
         ### Get value of: Cu, Cl, tu, tl, tm
         '''
         X  = self.x
-        xx = self.xx
+        xx = self.normX
         yu = self.yu
         yl = self.yl
         iLE = self.iLE
@@ -562,16 +567,16 @@ class PhysicalSec():
         ```
         '''
         X   = self.x
-        xx  = self.xx
+        xx  = self.normX
         mu  = self.mu
         nn  = xx.shape[0]
         iLE = self.iLE
 
         dMw = np.zeros(nn)
         for i in range(nn-1):
-            if xx[i]>0.98:
+            if xx[i] > 0.98:
                 continue
-            dMw[i] = (mu[i+1]-mu[i])/(xx[i+1]-xx[i])
+            dMw[i] = (mu[i + 1] - mu[i]) / (xx[i + 1] - xx[i])
             dMw[i] = min(dMw[i], 2)
 
         flag = PhysicalSec.check_singleshock(xx, mu, dMw)
@@ -668,7 +673,7 @@ class PhysicalSec():
         ### Get value of: N, Hi, Hc
         '''
         X   = self.x
-        xx  = self.xx
+        xx  = self.normX
         hu  = self.hu
         nn  = xx.shape[0]
         iLE = self.iLE
@@ -760,7 +765,7 @@ class PhysicalSec():
         ### Get value of: Length, lSW, DCp, Err, DMp, CLU, kaf
         '''
         X  = self.x
-        xx = self.xx
+        xx = self.normX
         mu = self.mu
         nn = xx.shape[0]
         x1 = self.xf_dict['1'][2]
@@ -821,7 +826,7 @@ class PhysicalSec():
 
     def extract_features(self):
         '''
-        Extract flow features list in the dictionart.
+        Extract flow features list in the dictionary.
         '''
         self.locate_basic()
         self.locate_sep()

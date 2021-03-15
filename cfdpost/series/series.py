@@ -61,6 +61,7 @@ class Series():
         self.linearSection = (0, 0, 0, 0)
 
         self._buffet_cl = 0.0
+        self._buffet_aoa = 0.0
         self._buffet_cl_flag = False
         self.buffet_cl_precise = 0.001
         
@@ -84,7 +85,7 @@ class Series():
     @property
     def buffet_cl(self):
         if self._buffet_cl_flag:
-            return self._buffet_cl
+            return (self._buffet_cl, self._buffet_aoa)
         else:
             print(f"series No. {self.index}'s buffet cl not cal")
             return 0.0
@@ -141,7 +142,8 @@ class Series():
             if reg.score(AoAX, CLY) < 0.998:
                 break
         else:
-            print("can find endIDX")
+            print("can find endIDX %d" % endIDX)
+            endIDX += 1
 
         AoL0 = -reg.intercept_ / reg.coef_
 
@@ -188,6 +190,7 @@ class Series():
             localdCLdA = 0.5 * (pointp1 - pointm1) / dAoA
             
             if localdCLdA < coef and dYdX[-1] > coef:
+                self._buffet_aoa = AoAGrid[i]
                 if cri == 'CL':
                     self._buffet_cl = point1
                 else:
@@ -199,27 +202,34 @@ class Series():
         
         return flag, dYdX
 
-    def _buffet_crit_crmx(self, cri):
+    def _buffet_crit_crmx(self, cri, order=2, mod='max'):
         AoA = self.seriesData['AoA']
         criData = self.seriesData[cri]
         dAoA = self.buffet_cl_precise * 10
-        AoAGrid  = np.arange(AoA[0], AoA[-1] + 0.5, dAoA)
+        AoAGrid  = np.arange(AoA[0], AoA[-1] + 0.5 - dAoA, dAoA)
 
         fCLAoA = Fitting(AoA, criData)
         flag = False
 
-        RCL = [-1] # need to compare with RCL[-1]
+        RCL = [-100] # need to compare with RCL[-1]
         for i in range(1, AoAGrid.shape[0] -1):
-
-            pointp1 = fCLAoA(AoAGrid[i + 1])
-            point1 = fCLAoA(AoAGrid[i])
-            pointm1 = fCLAoA(AoAGrid[i - 1])
-
-            localdCLdA = 0.5 * (pointp1 - pointm1) / dAoA
-            locald2CLdA2 = (pointp1 + pointm1 - 2 * point1) / (dAoA)**2
-            localRCL = - locald2CLdA2 / (1 + localdCLdA**2)**1.5
             
+            if order == 2:
+                pointp1 = fCLAoA(AoAGrid[i + 1])
+                point1 = fCLAoA(AoAGrid[i])
+                pointm1 = fCLAoA(AoAGrid[i - 1])
+
+                localdCLdA = 0.5 * (pointp1 - pointm1) / dAoA
+                locald2CLdA2 = (pointp1 + pointm1 - 2 * point1) / (dAoA)**2
+                localRCL = - locald2CLdA2 / (1 + localdCLdA**2)**1.5
+            elif order == 0:
+                localRCL = fCLAoA(AoAGrid[i])
+            else:
+                raise
+            
+            localRCL *= (-1, 1)[mod == 'max']
             if localRCL < RCL[-1] and RCL[-1] > RCL[-2]:
+                self._buffet_aoa = AoAGrid[i]
                 if cri == 'CL':
                     self._buffet_cl = pointm1
                 else:
@@ -231,33 +241,22 @@ class Series():
         
         RCL.pop(0) # pop the first element, -1
         return flag, RCL
+
     
     def set_buffet_crit(self, method='sep', cri='CL', delta= 0.1, precise=0.001):
-        '''
-        set the buffet cl 's critia
-
-        param:
-        ---
-        `method`    critia
-            sep         initial seperation
-            slope-des   slope descend delta
-            max-curv    max curvature
-        `cri`       the parameter used for curve against AoA
-
-        `delta`     the value descend
-
-        `precise`   the interval of cl to analysis
-
-        '''
         self.buffet_cl_precise = precise
         if method == 'sep':
             self._buffet_cl_flag = self._buffet_crit_sep()
-        elif method == 'slope-des':
+        elif method == 'slope-descend':
             self._buffet_cl_flag, value = self._buffet_crit_slrd(cri, delta)
         elif method == 'max-curv':
             self._buffet_cl_flag, value = self._buffet_crit_crmx(cri)
+        elif method == 'min':
+            self._buffet_cl_flag, value = self._buffet_crit_crmx(cri, order=0, mod='max')
         else:
             raise Exception("xx")
+        if not self._buffet_cl_flag:
+            print(f"series No. {self.index}'s buffet cl not cal by {method} {cri}")
         return self._buffet_cl_flag
 
     def change_cm_pivot(self, fromP, toP, reverse=False):
@@ -278,3 +277,97 @@ class Series():
         if reverse:
             self.seriesData['Cm'] = -self.seriesData['Cm']
         self.seriesData['Cm'] = self.seriesData['Cm'] - deltaC * self.seriesData['CL'] * np.cos(self.seriesData['AoA'] / 180 * 3.14)
+
+
+
+
+if __name__ == "__main__":
+    '''
+    READ CL SERIES FROM FILE
+
+    '''
+
+
+    CLs  = []
+    Cds  = []
+    Cms  = []
+    AoAs = []
+    X1s  = []
+    Mw1s = []
+    MwLs = []
+    MwTs = []
+    mUys = []
+    LSRs = []
+
+    numIndi = 0
+
+    #with open('D:\DeepLearning\OptCode\FoilOSF\\07-OSS-200-foils\cl-series.dat', 'r') as f:
+    with open('D:\DEEPLE~1\\202010~1\\0308-H~1\Runfiles\cl-series.dat', 'r') as f:
+    # with open('D:\DEEPLE~1\\202010~1\\0306-O~1\Runfiles\cl-series.dat', 'r') as f:
+        lines = f.readlines()
+
+
+    lineIndex = 0
+    while lineIndex < 5000:
+
+        lineIndex += 1
+        if lineIndex >= len(lines):
+            break
+
+        line = lines[lineIndex].split()
+        if len(line) <= 0:
+            continue
+        elif line[0] != 'zone':
+            continue
+        
+        n = int(line[-1])
+
+        CLs.append([])
+        Cds.append([])
+        Cms.append([])
+        AoAs.append([])
+        X1s.append([])
+        Mw1s.append([])
+        MwLs.append([])
+        MwTs.append([])
+        mUys.append([])
+        LSRs.append([])
+
+        for i in range(n):
+            lineIndex += 1
+            line = lines[lineIndex].split()
+
+            if float(line[3]) > 5:
+                break
+
+            CLs[numIndi].append(float(line[0]))
+            Cds[numIndi].append(float(line[1]))
+            Cms[numIndi].append(float(line[2]))
+            AoAs[numIndi].append(float(line[3]))
+            X1s[numIndi].append(float(line[4]))
+            Mw1s[numIndi].append(float(line[5]))
+            MwLs[numIndi].append(float(line[6]))
+            MwTs[numIndi].append(float(line[7]))
+            mUys[numIndi].append(float(line[8]))
+            # LSRs[numIndi].append(float(line[9]))
+        
+        numIndi += 1
+
+    print("%d indiv is added" % numIndi)
+    print(AoAs)
+    se = Series(0, AoA=AoAs[0][:9], CL=CLs[0][:9], X1=X1s[0][:9], mUy=mUys[0][:9], Cm=Cms[0][:9])
+    se.set_buffet_crit(method='min', cri='Cm')
+    print(se.buffet_cl)
+    se.change_cm_pivot('AC', 'LE', reverse=True)
+    history = se.find_linear_section()
+    plt.plot(history[0],history[1])
+    se.set_buffet_crit()
+    print(se.buffet_cl)
+    se.set_buffet_crit(method='slope-descend')
+    print(se.buffet_cl)
+    se.set_buffet_crit(method='max-curv')
+    print(se.buffet_cl)
+    se.set_buffet_crit(method='slope-descend', cri='Cm', delta=0.025)
+    print(se.buffet_cl)
+    se.set_buffet_crit(method='max-curv', cri='Cm')
+    print(se.buffet_cl)
