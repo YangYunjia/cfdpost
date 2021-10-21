@@ -5,6 +5,7 @@ import copy
 import os
 
 import numpy as np
+import cfdpost.utils as ut
 from scipy.interpolate import interp1d
 
 
@@ -61,7 +62,7 @@ class PhysicalSec():
         'kaf': ['slope aft', _value]                # average Mw slope of the aft upper surface (3/N~T)
     }
 
-    def __init__(self, Minf, AoA, Re):
+    def __init__(self, Minf, AoA, Re, Tinf = 460, gamma = 1.40):
         '''
         ### Inputs:
         ```text
@@ -70,9 +71,11 @@ class PhysicalSec():
         Re:         Reynolds number per meter
         ```
         '''
-        self.Minf = Minf
-        self.AoA  = AoA
-        self.Re   = Re
+        self.Minf  = Minf
+        self.AoA   = AoA
+        self.Re    = Re
+        self.Tinf  = Tinf
+        self.gamma = gamma
         self.xf_dict = copy.deepcopy(PhysicalSec.xf_dict)
 
     def setdata(self, x, y, Cp, Tw, Hi, Hc, dudy):
@@ -323,8 +326,107 @@ class PhysicalSec():
             if X[jj,0]<0.05 and jj>=iLE:
                 Hi[j] = r2
                 Hc[j] = r4
-
         return Hi, Hc, (Tw, dudy)
+
+    
+    def get_force_moment(self, X, Y, U, V, T, P, j0: int, j1: int, x_mc = 0.25, y_mc = 0.0):
+        paras = {'gamma'    : self.gamma,
+                 'Minf'     : self.Minf,
+                 'Re'       : self.Re,
+                 'Tinf'     : self.Tinf,
+                 'AoA'      : self.AoA,
+                 'x_mc'     : x_mc,
+                 'y_mc'     : y_mc}
+        return PhysicalSec.get_force(X, Y, U, V, T, P, j0, j1, paras)
+
+    @staticmethod
+    def get_force(X, Y, U, V, T, P, j0: int, j1: int, paras):
+        '''
+        Calculate cl and cd from field data
+
+        ### Inputs:
+        ```text
+        Field data: X, Y, U, V, T, P
+            - in ndarray (nj,nk) type
+            - data should be at nodes, rather than at cell center (cfl3d -> .prt are nodes value)
+        j0:     j index of the lower surface TE node
+        j1:     j index of the upper surface TE node
+        paras:  'gamma'    : self.gamma,
+                'Minf'     : self.Minf,
+                'Re'       : self.Re,
+                'Tinf'     : self.Tinf,
+                'AoA'      : self.AoA
+        ```
+
+        ### Return:
+        ```text
+        cx, cy: force coefficient of x,y dir
+        cl, cd: lift coef. and drag coef.
+        ```
+
+        ### Note:
+
+        ### Filed data (j,k) index
+        ```text
+        j: 1  - nj  from far field of lower surface TE to far field of upper surface TE
+        j: j0 - j1  from lower surface TE to upper surface TE
+        k: 1  - nk  from surface to far field (assuming pertenticular to the wall)
+        '''
+
+        cx = 0.0
+        cy = 0.0
+        cmz = 0.0
+        # print(self.Minf, self.Re, self.Tinf)
+
+        for j in range(j0, j1-1):
+            
+            point1 = np.array([X[j, 0], Y[j, 0]])        # coordinate of surface point j
+            point2 = np.array([X[j, 1], Y[j, 1]]) 
+            point3 = np.array([X[j + 1, 0], Y[j + 1, 0]])
+            point4 = np.array([X[j + 1, 1], Y[j + 1, 1]])
+            
+            p_cen = 0.25 * (P[j, 0] + P[j, 1] + P[j+1, 0] + P[j+1, 1])
+            t_cen = 0.25 * (T[j, 0] + T[j, 1] + T[j+1, 0] + T[j+1, 1])
+            ### u,v on wall kepp origin
+            # u_cen = 0.25 * (U[j, 0] + U[j, 1] + U[j+1, 0] + U[j+1, 1])
+            # v_cen = 0.25 * (V[j, 0] + V[j, 1] + V[j+1, 0] + V[j+1, 1])
+            ### u,v on wall set to 0
+            u_cen = 0.5 * (U[j, 1] + U[j+1, 1])
+            v_cen = 0.5 * (V[j, 1] + V[j+1, 1])
+            
+            vec_sl = point3 - point1                    # surface vector sl
+            veclen = np.linalg.norm(vec_sl)   # length of surface vector sl
+            vec_sl = vec_sl / veclen
+            area = 0.5 * np.linalg.norm(np.cross(point4 - point1, point3 - point2))
+            
+            metrix_nt2xy = np.array([[vec_sl[0], vec_sl[1]],[-vec_sl[1], vec_sl[0]]])
+
+            # pressure part, normal to wall(sl)
+            ### P
+            # dfp_n = 1.43 / (paras['gamma'] * paras['Minf']**2) * (paras['gamma'] * p_cen - 1) * veclen
+            ### Cp
+            dfp_n = p_cen * veclen
+
+            # viscous part, tang to wall(sl)
+            mu = t_cen**1.5 * (1 + 198.6 / paras['Tinf']) / (t_cen + 198.6 / paras['Tinf'])
+            dfv_t = 0.063 / (paras['Minf'] * paras['Re']) * mu * np.dot(np.array([u_cen, v_cen]), vec_sl) * veclen**2 / area
+
+            # print(mu, t_cen, p_cen, np.array([u_cen,v_cen]))
+            dfp = np.dot(np.array([dfv_t, -dfp_n]), metrix_nt2xy)
+
+            cx += dfp[0]
+            cy += dfp[1]
+
+            sl_cen = 0.5 * (point1 + point3)
+            cmz += dfp[1] * (sl_cen[0] - paras['x_mc']) - dfp[0] * (sl_cen[1] - paras['y_mc'])
+
+
+        metrix_xy2ab = np.array([[ut.cos(paras['AoA']), -ut.sin(paras['AoA'])],[ut.sin(paras['AoA']), ut.cos(paras['AoA'])]])
+
+        fld = np.dot(np.array([cx, cy]), metrix_xy2ab)
+
+        return cx, cy, fld[1], fld[0], cmz
+
 
     def getValue(self, feature: str, key='key') -> float:
         '''
@@ -471,6 +573,13 @@ class PhysicalSec():
         #* S => separation start position
         #* R => reattachment position
         #* mUy => position of min(du/dy)
+
+        # seperation can occur twice, a shock seperation bubble, and a rear seperation
+        # thus need to distinguish them
+
+        sep_flag = False
+        ret_flag = False
+
         min_Uy = 1e6
         for i in range(int(0.5*nn)):
             ii = iLE + i
@@ -479,18 +588,25 @@ class PhysicalSec():
             if X[ii]>0.98:
                 break
 
-            if dudy[ii]>=0.0 and dudy[ii+1]<0.0:
-                self.xf_dict['S'][1] = ii
-                self.xf_dict['S'][2] = (0.0-dudy[ii])*(X[ii+1]-X[ii])/(dudy[ii+1]-dudy[ii])+X[ii]
-
-            if dudy[ii]<=0.0 and dudy[ii+1]>0.0:
-                self.xf_dict['R'][1] = ii
-                self.xf_dict['R'][2] = (0.0-dudy[ii])*(X[ii+1]-X[ii])/(dudy[ii+1]-dudy[ii])+X[ii]
-        
             if dudy[ii]<min_Uy and dudy[ii-1]>=dudy[ii] and dudy[ii+1]>=dudy[ii]:
                 min_Uy = dudy[ii]
                 self.xf_dict['mUy'][1] = ii
                 self.xf_dict['mUy'][2] = X[ii]
+
+            if (not sep_flag) and dudy[ii]>=0.0 and dudy[ii+1]<0.0:
+                self.xf_dict['S'][1] = ii
+                self.xf_dict['S'][2] = (0.0-dudy[ii])*(X[ii+1]-X[ii])/(dudy[ii+1]-dudy[ii])+X[ii]
+                sep_flag = True
+
+            if (not ret_flag) and dudy[ii]<=0.0 and dudy[ii+1]>0.0:
+                self.xf_dict['R'][1] = ii
+                self.xf_dict['R'][2] = (0.0-dudy[ii])*(X[ii+1]-X[ii])/(dudy[ii+1]-dudy[ii])+X[ii]
+                ret_flag = True
+                break
+        
+        if sep_flag and (not ret_flag):
+            self.xf_dict['R'][1] = nn - 1
+            self.xf_dict['R'][2] = X[-1]
 
     def locate_geo(self):
         '''
