@@ -9,3 +9,5 @@ Calculation/
 *.ini
 
 example/test/
+
+test*
