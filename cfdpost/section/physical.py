@@ -87,9 +87,11 @@ class PhysicalLine():
         # find the feature position
         aa = self.xf_dict[feature]
 
-        if key in ['key']: return aa[0]
-        if key in ['i']:   return aa[1]
-        if key in ['X']:   return aa[2]
+        if key in ['i']:
+            return aa[1]
+
+        if key in ['X']:
+            return aa[2]
 
         # print out other varibles at `feature` position
 
@@ -134,7 +136,20 @@ class PhysicalSecWall(PhysicalLine):
         # 'P':  ['pleatue', [], []]
     }
 
-    def locate_sep(self, st: int, ed: int, use_tail: bool = False, x_range: Tuple[float, float] = None):
+    def locate_sep(self, **kwargs):
+
+        _mUy, _sepS, _sepR, _sepT = self._locate_sep(**kwargs)
+        for i in range(2):
+            self.xf_dict['mUy'][i+1] = _mUy[i]
+            try:
+                self.xf_dict['S'][i+1] = _sepS[i]
+                self.xf_dict['R'][i+1] = _sepR[i]
+                self.xf_dict['T'][i+1] = _sepT[i]
+            except IndexError:
+                pass
+
+
+    def _locate_sep(self, st: int, ed: int, use_tail: bool = False, x_range: Tuple[float, float] = None):
         
         #* S => separation start position
         #* R => reattachment position
@@ -148,6 +163,11 @@ class PhysicalSecWall(PhysicalLine):
         pp = self.Cp
         tau_x = self.dudy
 
+        _mUy   = [0, 0.0]
+        _sep_S = [[], []]
+        _sep_T = [[], []]
+        _sep_R = [[], []]
+
         for ii in range(st, ed - 1):
 
             if x_range is not None and (xx[ii] < x_range[0] or xx[ii] > x_range[1]):
@@ -156,13 +176,13 @@ class PhysicalSecWall(PhysicalLine):
             #* find the minimal point of dUdy => mUy
             if tau_x[ii]<min_Uy and tau_x[ii-1]>=tau_x[ii] and tau_x[ii+1]>=tau_x[ii]:
                 min_Uy = tau_x[ii]
-                self.xf_dict['mUy'][1] = ii
-                self.xf_dict['mUy'][2] = xx[ii]
+                _mUy[0] = ii
+                _mUy[1] = xx[ii]
 
             if tau_x[ii]>=0.0 and tau_x[ii+1]<0.0:
 
-                self.xf_dict['S'][1].append(ii)
-                self.xf_dict['S'][2].append((0.0-tau_x[ii])*(xx[ii+1]-xx[ii])/(tau_x[ii+1]-tau_x[ii])+xx[ii])
+                _sep_S[0].append(ii)
+                _sep_S[1].append((0.0-tau_x[ii])*(xx[ii+1]-xx[ii])/(tau_x[ii+1]-tau_x[ii])+xx[ii])
                 sep_flag = True
                 is_sep_flag = True
 
@@ -170,24 +190,26 @@ class PhysicalSecWall(PhysicalLine):
                 jj = ii + 1
                 while pp[jj] > pp[jj-1]:
                     jj -= 1
-                self.xf_dict['T'][1].append(jj)
-                self.xf_dict['T'][2].append(xx[jj])
+                _sep_T[0].append(jj)
+                _sep_T[1].append(xx[jj])
 
             if tau_x[ii]<=0.0 and tau_x[ii+1]>0.0:
-                self.xf_dict['R'][1].append(ii)
-                self.xf_dict['R'][2].append((0.0-tau_x[ii])*(xx[ii+1]-xx[ii])/(tau_x[ii+1]-tau_x[ii])+xx[ii])
+                _sep_R[0].append(ii)
+                _sep_R[1].append((0.0-tau_x[ii])*(xx[ii+1]-xx[ii])/(tau_x[ii+1]-tau_x[ii])+xx[ii])
                 sep_flag = False
 
 
-        if sep_flag:
-            self.xf_dict['R'][1].append(self.n_point-1)
-            self.xf_dict['R'][2].append(xx[-1])
+        if use_tail and sep_flag:
+            _sep_R[0].append(self.n_point-1)
+            _sep_R[1].append(xx[-1])
 
         if use_tail and (not is_sep_flag):
-            self.xf_dict['S'][1].append(self.n_point-1)
-            self.xf_dict['R'][1].append(self.n_point-1)
-            self.xf_dict['S'][2].append(xx[-1])
-            self.xf_dict['R'][2].append(xx[-1])
+            _sep_S[0].append(self.n_point-1)
+            _sep_R[0].append(self.n_point-1)
+            _sep_S[1].append(xx[-1])
+            _sep_R[1].append(xx[-1])
+
+        return _mUy, _sep_S, _sep_R, _sep_T
 
 
 class PhysicalSec(PhysicalSecWall):
@@ -724,7 +746,16 @@ class PhysicalSec(PhysicalSecWall):
 
         ### Get value of: S, R, mUy
         '''
-        super().locate_sep(self.iLE, self.x.shape[0], x_range=(0.0, 1.0))
+        # super().locate_sep(self.iLE, self.x.shape[0], x_range=(0.0, 1.0))
+        _mUy, _sepS, _sepR, _sepT = self._locate_sep(self.iLE, self.x.shape[0], x_range=(0.0, 1.0))
+        for i in range(2):
+            self.xf_dict['mUy'][i+1] = _mUy[i][0]
+            try:
+                self.xf_dict['S'][i+1] = _sepS[i][0]
+                self.xf_dict['R'][i+1] = _sepR[i][0]
+                self.xf_dict['T'][i+1] = _sepT[i][0]
+            except IndexError:
+                pass
 
     def locate_geo(self):
         '''
@@ -825,7 +856,7 @@ class PhysicalSec(PhysicalSecWall):
             f = open('error.txt', 'w', encoding='utf-8')
             f.write('Not single shock detected!')
             f.close()
-            raise RuntimeError('Not single shock detected!')
+            return 0
 
         #* F => shock foot position
         self.xf_dict['F'][1] = np.argmin(np.abs(X[iLE:]-xx[i_F])) + iLE
@@ -1296,7 +1327,7 @@ class PhysicalSec(PhysicalSecWall):
         for feature in self.xf_dict.keys():
             
             if len(self.xf_dict[feature])==2:
-                value = self.getValue(feature, key='key')
+                value = self.getValue(feature)
                 f.write('%10s   %15.6f \n'%(feature, value))
                 continue
 
@@ -1381,7 +1412,7 @@ class PhysicalXfoil(PhysicalSec):
         for feature in features:
             
             if len(self.xf_dict[feature])==2:
-                value = self.getValue(feature, key='key')
+                value = self.getValue(feature)
                 f.write('%10s   %15.6f \n'%(feature, value))
                 continue
 
@@ -1477,7 +1508,7 @@ class PhysicalTSFoil(PhysicalSec):
         for feature in self.xf_dict.keys():
             
             if len(self.xf_dict[feature])==2:
-                value = self.getValue(feature, key='key')
+                value = self.getValue(feature)
                 f.write('%10s   %15.6f \n'%(feature, value))
                 continue
 
