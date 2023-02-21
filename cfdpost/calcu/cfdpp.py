@@ -3,7 +3,7 @@ import math
 import numpy as np
 from .utils import *
 from .system import cfdpp_cmd
-# from py2tec.py2tec import tec2py
+from py2tec.py2tec import tec2py
 
 typ_dict = {
     'energy':   0,
@@ -27,7 +27,9 @@ class cfdpp():
 
     '''
 
-    def __init__(self, op_dir=None, core=1):
+    def __init__(self, op_dir=None, core=1, verbose='All'):
+        self.verbose = {'All': 0, 'Warning': 1, 'None': 2}[verbose]
+        
         if op_dir is None:
             op_dir = os.getcwd()
 
@@ -57,11 +59,11 @@ class cfdpp():
         self.areas = None
 
         if not os.path.exists(self.inp_dir):
-            print("mcfd.inp not exist in " + self.op_dir + "nbc not set")
+            if self.verbose < 2:print("mcfd.inp not exist in " + self.op_dir + ". nbc not set")
         else:
             self.bc_number = int(self.read_para('mbcons'))
         
-        print("\ndirection changed to " + self.op_dir)
+        if self.verbose < 1:print("\ndirection changed to " + self.op_dir)
 
         os.chdir(self.op_dir)
 
@@ -70,9 +72,9 @@ class cfdpp():
         do split metis and split field to `self.core_number` metis
         '''
 
-        os.system("cd %s && @tometis pmetis %d" % (self.op_dir, self.core_number))
+        os.system("cd %s && tometis pmetis %d > metis.log" % (self.op_dir, self.core_number))
 
-    def set_para(self, key, value):
+    def set_para(self, key, value, file=None):
         '''
         set the `key` in mcfd.inp to given value
 
@@ -90,7 +92,18 @@ class cfdpp():
         except:
             print("value cant be convert to a string")
 
-        with open(self.inp_dir, 'r') as f, open(self.bak_dir, 'w') as fbak:
+        if file is None:
+            f_name = self.inp_dir
+        elif file == 'node':
+            f_name = os.path.join(self.op_dir, 'npfopts.inp')
+        else:
+            if not os.path.exists(file):
+                raise Exception(file + ' not exist, when setting ' + key + ' to ' + value)
+            f_name = os.path.join(self.op_dir, file)
+        
+        b_name = f_name + '.bak'
+
+        with open(f_name, 'r') as f, open(b_name, 'w') as fbak:
             for line in f.readlines():
                 fbak.write(line)
 
@@ -101,8 +114,10 @@ class cfdpp():
                 
                 data += line
         
-        with open(self.inp_dir, 'w') as f:
+        with open(f_name, 'w') as f:
             f.writelines(data)
+
+    
 
     def read_para(self, key):
         '''
@@ -121,6 +136,8 @@ class cfdpp():
             for line in f.readlines(): 
                 if line.find(key) > -1:
                     return line.split()[1]
+        print('*****Warning:   key not found')
+        return False
                 
     def set_infset(self, inf_num, values, filte=[]):
         '''
@@ -183,7 +200,7 @@ class cfdpp():
         with open(self.inp_dir, 'w') as f:
             f.writelines(data)
 
-    def run_cfd(self, restart=False, step=1500):
+    def run_cfd(self, restart=False, step=1500, **kwargs):
         '''
         run cfd
 
@@ -197,9 +214,13 @@ class cfdpp():
         self.set_para("istart", int(restart))
         self.set_para("ntstep", step)
 
+        for key in kwargs:
+            self.set_para(key, kwargs[key])
+
         print("runing cfd with core number %d" % self.core_number)
 
         if self.core_number > 1:
+            os.chdir(self.op_dir)
             os.system('start /wait /min "" "C:\Program Files\MPICH2\\bin\mpiexec.exe" -localonly -np %d mpimcfd' % self.core_number)
 
     def read_FFM_history(self, n_var=8, n_step=1e10):
@@ -246,7 +267,7 @@ class cfdpp():
 
         n_bc = self.bc_number
         n_step = min(int((file_len) / (23 * n_bc + 1)), n_step)
-        print("Acquiring %d bcs intergal data for first %d steps" % (n_bc, n_step))
+        if self.verbose < 1:print("Acquiring %d bcs intergal data for first %d steps" % (n_bc, n_step))
 
         data = np.zeros((n_step, n_bc, n_var))
         areass = np.zeros((n_bc, 4))
@@ -304,20 +325,20 @@ class cfdpp():
         flux = 0.0
 
         if ave_window > 0:
-            print("result averaged by %d steps" % (ave_window))
+            if self.verbose < 1:print("result averaged by %d steps" % (ave_window))
 
         for i_bc in bc_series:
             # print("reading bc No. %d, type %s" % (i_bc,typ))
 
             flux_i = self.FFM_data[-1, i_bc-1, int_typ] 
             if abs(flux_i - self.FFM_data[-5, i_bc-1, int_typ]) / flux_i > eps:
-                print("bc No. %d, type %s not converge" % (i_bc,typ))
+                if self.verbose < 2:print("bc No. %d, type %s not converge" % (i_bc,typ))
             if ave_window > 0:
                 flux_i = sum([stepData[i_bc-1, int_typ] for stepData in self.FFM_data[-ave_window:]]) / ave_window
 
             if move_axis is not None:
                 if typ == 'mz':
-                    print("move axis")
+                    if self.verbose < 1:print("move axis")
                     flux_i -= sum([stepData[i_bc-1, 3] for stepData in self.FFM_data[-ave_window:]]) / ave_window * move_axis[0]
                     flux_i -= sum([stepData[i_bc-1, 2] for stepData in self.FFM_data[-ave_window:]]) / ave_window * move_axis[1]
 
@@ -355,18 +376,46 @@ class cfdpp():
 
         return area       
 
-    # def extract_bc(self, bc_series):
-    #     data = {'varnames': None, 'lines': []}
-    #     for i in bc_series:
-    #         cfdpp_cmd("exbc2do1 exbcsin.bin pltosout.bin %d" % i)
-    #         if not os.path.exists("BC%d.mpf1d" % i):
-    #             raise IOError("    [Warning] BC%d not extract" %i)
+    def extract_bc(self, bc_series, forcenew, remove=True):
+        data = {'varnames': None, 'lines': []}
+        for i in bc_series:
+            if forcenew or not os.path.exists(os.path.join(self.op_dir, "BC%d.dat" % i)):
+                cfdpp_cmd("exbc2do1 exbcsin.bin pltosout.bin %d" % i)
+                if remove:
+                    os.system('del ' + os.path.join(self.op_dir, "BC%d.mpf1d" % i))
+                    os.system('del ' + os.path.join(self.op_dir, "BC%d.txt" % i))
+            if not os.path.exists("BC%d.dat" % i):
+                raise IOError("    [Warning] BC%d not extract" %i)
             
-    #         data_tmp = tec2py(os.path.join(self.op_dir, "BC%d.dat" % i))
-    #         if data['varnames'] is None:
-    #             data['varnames'] = data_tmp['varnames']
-    #         data['lines'] += data_tmp['lines']
+            data_tmp = tec2py(os.path.join(self.op_dir, "BC%d.dat" % i))
+            if data['varnames'] is None:
+                data['varnames'] = data_tmp['varnames']
+            data['lines'] += data_tmp['lines']
         
-    #     return data
 
-            
+        return data
+
+    
+    def extract_line(self, st, ed, forcenew, remove=True, var='P T U V W R M'):
+
+        if forcenew or not os.path.exists(os.path.join(self.op_dir, "lineoutput_1.tec")):
+            with open(os.path.join(self.op_dir, "linelist.inp"), 'w') as f:
+                
+                f.write('1\n')
+                f.write('6\n')
+                f.write('%.5f %.5f %.5f  ' % st)
+                f.write('%.5f %.5f %.5f\n' % ed)
+
+            cfdpp_cmd("npf2lin1 0 linelist.inp lineoutput pltosout.bin " + var)
+            if remove:
+                os.system('del ' + os.path.join(self.op_dir, "lineoutput_1.mpf1d"))
+                os.system('del ' + os.path.join(self.op_dir, "lineoutput_1.txt"))
+
+        if not os.path.exists(os.path.join(self.op_dir, "lineoutput_1.tec")):
+            raise IOError("    [Warning] line not extract")
+
+        data = tec2py(os.path.join(self.op_dir, "lineoutput_1.tec"), info=False)
+
+
+
+        return data

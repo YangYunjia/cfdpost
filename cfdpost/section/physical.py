@@ -9,7 +9,179 @@ import cfdpost.utils as ut
 from scipy.interpolate import interp1d
 
 
-class PhysicalSec():
+DATA_TYPE = ['DIMENTIONAL']
+
+
+class PhysicalLine():
+
+    xf_dict = {}
+
+    def __init__(self, name='new_physical'):
+
+        self.name = name
+        self.xf_dict = copy.deepcopy(self.__class__.xf_dict)
+
+        # self._basic_var_info = basic_var_info
+
+
+    def setdata(self, x, y, Cp, Tw, dudy, info=None, **kwargs):
+        '''
+        Set the data of this foil or section.
+
+        Data:   ndarray, start from lower surface trailing edge
+        '''
+        self.x = copy.deepcopy(x)
+        self.y = copy.deepcopy(y)
+        self.Cp = copy.deepcopy(Cp)
+        self.Tw = copy.deepcopy(Tw)
+        self.dudy = copy.deepcopy(dudy)
+
+    
+    @property
+    def n_point(self):
+        '''
+        Number of points in this section
+        '''
+        return self.x.shape[0]
+
+    def _get_i0_i1(self, ii):
+        '''
+        return the index of the line interpolating for the other variables
+        for a wall section, all the input data could be used to interpolate, so return none
+        for a surface whose `x` is not increasing, a function should be implenment to 
+        guarantee the data used to interpolate is increasing
+        '''
+        return None, None
+
+    def getValue(self, feature: str, key='key'):
+        '''
+        Get value of given feature.
+
+        ### Inputs:
+        ```text
+        feature:    key of feature dictionary
+        key:        'i', 'X', 'Cp', 'Mw', 'Tw', 'Hi', 'Hc', 'dudy'
+        ```
+        '''
+
+        if not feature in self.xf_dict.keys():
+            print('  Warning: feature [%s] not valid'%(feature))
+            return 0.0
+
+        # find the feature position
+        aa = self.xf_dict[feature]
+
+        # if _i (index) is not in xf_dict
+        # 这部分是图省事，没有改当返回值是一个列表时的操作
+        # if len(aa)==2:
+        #     if key in 'X':
+        #         return aa[1]
+        #     else:
+        #         raise KeyError('  Warning: key [%s] not valid for 2 array'%(key))
+
+        # print out index or x position
+        if key in 'i':
+            return aa[1]
+
+        if key in 'X':
+            return aa[2]
+
+        # print out other varibles at `feature` position
+
+        if not key in self.__dict__:
+            raise KeyError('  Warning: key [%s] not valid'%(key))
+            return 0.0
+        
+        ii = aa[1]
+        xx = aa[2]
+
+        # if xx <= 1e-6:
+        #     return 0.0
+        if not isinstance(ii, list):
+            i0, i1 = self._get_i0_i1(ii)
+            return self.getValueX(xx, key=key, i0=i0, i1=i1)
+        
+        ff = []
+        for iii, xxx in zip(ii, xx):
+            i0, i1 = self._get_i0_i1(iii)
+            ff.append(self.getValueX(xxx, key=key, i0=i0, i1=i1))
+        
+        return ff
+    
+    def getValueX(self, xx, key='key', i0=None, i1=None):
+
+        yy = self.__dict__[key]
+
+        # if xx <= 1e-6:
+        #     return 0.0
+
+        X = self.x[i0:i1]
+        Y = yy[i0:i1]
+        print(i0, i1, X, Y, xx)
+        f = interp1d(X, Y, kind='cubic')
+        return float(f(xx))
+
+
+
+class PhysicalSecWall(PhysicalLine):
+    _Xlist = []
+    xf_dict = {
+        'S':  ['separation start', [], []],
+        'R':  ['reattachment', [], []],
+        'T':  ['before separation', [], []],
+        'P':  ['pleatue', [], []]
+    }
+
+    def __init__(self, name):
+        
+        info = {'X': 'DIMENTONAL', 'Cp': 'P', 'dudy':'Tau_x'}
+        super().__init__(name)
+    
+    def locate_sep(self):
+
+        sep_flag = False
+        ret_flag = False
+
+        xx = self.x
+        pp = self.Cp
+        tau_x = self.dudy
+
+        for ii in range(self.n_point-1): 
+            if tau_x[ii]>=0.0 and tau_x[ii+1]<0.0:
+
+                self.xf_dict['S'][1].append(ii)
+                self.xf_dict['S'][2].append((0.0-tau_x[ii])*(xx[ii+1]-xx[ii])/(tau_x[ii+1]-tau_x[ii])+xx[ii])
+                # print(ii)
+                sep_flag = True
+                ret_flag = False
+
+                # find the pressure before separation
+                jj = ii + 1
+                while pp[jj] > pp[jj-1]:
+                    jj -= 1
+                self.xf_dict['T'][1].append(jj)
+                self.xf_dict['T'][2].append(xx[jj])
+
+            if tau_x[ii]<=0.0 and tau_x[ii+1]>0.0:
+                self.xf_dict['R'][1].append(ii)
+                self.xf_dict['R'][2].append((0.0-tau_x[ii])*(xx[ii+1]-xx[ii])/(tau_x[ii+1]-tau_x[ii])+xx[ii])
+                # print("R", ii)
+                ret_flag = True
+
+        if sep_flag and (not ret_flag):
+            self.xf_dict['R'][1].append(self.n_point-1)
+            self.xf_dict['R'][2].append(xx[-1])
+
+        # if not sep_flag:
+        #     self.xf_dict['S'][1].append(self.n_point-1)
+        #     self.xf_dict['R'][1].append(self.n_point-1)
+        #     self.xf_dict['S'][2].append(xx[-1])
+        #     self.xf_dict['R'][2].append(xx[-1])
+
+        # print(self.xf_dict['S'][1],self.xf_dict['R'][1])
+
+
+class PhysicalSec(PhysicalLine):
     '''
     Extracting flow features of a section (features on/near the wall)
 
@@ -77,6 +249,7 @@ class PhysicalSec():
         self.Tinf  = Tinf
         self.gamma = gamma
         self.xf_dict = copy.deepcopy(PhysicalSec.xf_dict)
+        self.paras = {'Qratio': 0.2}    # the ratio of chord to find suction peak near leading edge on lower surface
 
     def setdata(self, x, y, Cp, Tw, Hi, Hc, dudy):
         '''
@@ -130,12 +303,7 @@ class PhysicalSec():
         self.normX = np.arange(0.0, 1.0, 0.001)
         self.mu = fmw(self.normX)
 
-    @property
-    def n_point(self):
-        '''
-        Number of points in this section
-        '''
-        return self.x.shape[0]
+
 
     @staticmethod
     def IsentropicCp(Ma, Minf: float, g=1.4):
@@ -340,7 +508,7 @@ class PhysicalSec():
         return PhysicalSec.get_force(X, Y, U, V, T, P, j0, j1, paras)
 
     @staticmethod
-    def get_force(X, Y, U, V, T, P, j0: int, j1: int, paras):
+    def get_force(X, Y, U, V, T, P, j0: int, j1: int, paras, ptype='Cp'):
         '''
         Calculate cl and cd from field data
 
@@ -403,9 +571,10 @@ class PhysicalSec():
 
             # pressure part, normal to wall(sl)
             ### P
-            # dfp_n = 1.43 / (paras['gamma'] * paras['Minf']**2) * (paras['gamma'] * p_cen - 1) * veclen
-            ### Cp
-            dfp_n = p_cen * veclen
+            if ptype == 'P':
+                dfp_n = 1.43 / (paras['gamma'] * paras['Minf']**2) * (paras['gamma'] * p_cen - 1) * veclen
+            else:
+                dfp_n = p_cen * veclen
 
             # viscous part, tang to wall(sl)
             mu = t_cen**1.5 * (1 + 198.6 / paras['Tinf']) / (t_cen + 198.6 / paras['Tinf'])
@@ -427,67 +596,15 @@ class PhysicalSec():
 
         return cx, cy, fld[1], fld[0], cmz
 
-
-    def getValue(self, feature: str, key='key') -> float:
-        '''
-        Get value of given feature.
-
-        ### Inputs:
-        ```text
-        feature:    key of feature dictionary
-        key:        'i', 'X', 'Cp', 'Mw', 'Tw', 'Hi', 'Hc', 'dudy'
-        ```
-        '''
-
-        if not feature in PhysicalSec.xf_dict.keys():
-            print('  Warning: feature [%s] not valid'%(feature))
-            return 0.0
-
-        aa = self.xf_dict[feature]
-
-        if len(aa)==2:
-            return aa[1]
-
-        if key in 'i':
-            return aa[1]
-
-        if key in 'X':
-            return aa[2]
-
-        if key in 'Cp':
-            yy = self.Cp
-        elif key in 'Mw':
-            yy = self.Mw
-        elif key in 'Tw':
-            yy = self.Tw
-        elif key in 'Hi':
-            yy = self.Hi
-        elif key in 'Hc':
-            yy = self.Hc
-        elif key in 'dudy':
-            yy = self.dudy
-        else:
-            raise Exception('  key %s not valid'%(key))
-
-        ii = aa[1]
-        xx = aa[2]
-
-        if xx <= 1e-6:
-            return 0.0
-
+    def _get_i0_i1(self, ii):
         if ii >= self.iLE:
             i0 = max(self.iLE, ii-4)
-            i1 = i0 + 7
+            i1 = min(i0 + 7, len(self.x))
         else:
             i1 = min(self.iLE, ii+4)
-            i0 = i1 - 7
+            i0 = max(i1 - 7, 0)
 
-        X = self.x[i0:i1]
-        Y = yy[i0:i1]
-
-        f = interp1d(X, Y, kind='cubic')
-
-        return f(xx) 
+        return i0, i1 
 
     #TODO: locate the position of flow features
     def locate_basic(self):
@@ -540,7 +657,7 @@ class PhysicalSec():
                 break
         
         #* Q => suction peak near leading edge on lower surface
-        for i in range(int(0.2*nn)):
+        for i in range(int(self.paras['Qratio']*0.5*nn)):
             ii = iLE - i
             if M[ii-1]<=M[ii] and M[ii]>=M[ii+1]:
                 self.xf_dict['Q'][1] = ii
@@ -698,6 +815,9 @@ class PhysicalSec():
         flag = PhysicalSec.check_singleshock(xx, mu, dMw)
         self.xf_dict['lSW'][1] = flag
         if not flag==1:
+            f = open('error.txt', 'w', encoding='utf-8')
+            f.write('Not single shock detected!')
+            f.close()
             return 0
 
         #* F => shock foot position
@@ -730,7 +850,6 @@ class PhysicalSec():
             if dMw[i]<=0.0 and dMw[i+1]>0.0:
                 i_3 = i
                 break
-
         x_3 = xx[i_3]
         self.xf_dict['3'][1] = np.argmin(np.abs(X[iLE:]-x_3)) + iLE
         self.xf_dict['3'][2] = x_3

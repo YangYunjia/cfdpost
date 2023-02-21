@@ -2,6 +2,8 @@
 Post process of CFD results
 '''
 
+axis_2_idx = {'x': 3, 'y': 4, 'z': 5}
+
 import os
 import platform
 import numpy as np
@@ -345,7 +347,7 @@ class cfl3d():
         return True
 
     @staticmethod
-    def readprt_foil(path: str, j0: int, j1: int, fname='cfl3d.prt'):
+    def readprt_foil(path: str, j0: int, j1: int, fname='cfl3d.prt', coordinate='xy'):
         '''
         Read and extract foil Cp from cfl3d.prt
 
@@ -408,13 +410,16 @@ class cfl3d():
             if not line[0] in 'I':
                 continue
 
+            x_idx = axis_2_idx[coordinate[0]]
+            y_idx = axis_2_idx[coordinate[1]]
+
             for k in range(nk):
                 for j in range(nj):
                     L1 = f0.readline()
                     L1 = L1.split()
 
-                    X [j,k] = float(L1[3])
-                    Y [j,k] = float(L1[4])
+                    X [j,k] = float(L1[x_idx])
+                    Y [j,k] = float(L1[y_idx])
                     U [j,k] = float(L1[6])
                     V [j,k] = float(L1[7])
                     P [j,k] = float(L1[9])

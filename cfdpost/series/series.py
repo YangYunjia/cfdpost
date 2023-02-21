@@ -11,6 +11,7 @@ import os
 import re
 
 from sklearn.linear_model import LinearRegression
+from scipy.interpolate import PchipInterpolator as pchip
 
 from cst_modeling.foil import cst_foil
 from cfdpost.cfdresult import cfl3d
@@ -57,7 +58,7 @@ class Series():
             self.seriesData['CL'] = np.array(CL)
             self.seriesLength = len(AoA)
         else:
-            raise Exception("series AoA or CL value is not a list, or their size is not equal")
+            raise IOError("series AoA or CL value is not a list, or their size is not equal")
 
         for key in kwargs:
             if isinstance(kwargs[key], list):
@@ -336,7 +337,8 @@ def ext_result(var_name, indp_vars, op_dir=None, f_name='cl-series'):
     if var_name not in ['CL', 'AoA'] or not isinstance(indp_vars, list):
         raise Exception
 
-    ext_names = ['CL', 'Cd', 'Cm', 'AoA', 'X1', 'Mw1', 'MwL', 'mUy', 'LSR', 'XS', 'XR']
+    ext_names = ['CL', 'Cd', 'Cm', 'AoA']
+    # ext_names = ['CL', 'Cd', 'Cm', 'AoA', 'X1', 'Mw1', 'MwL', 'mUy', 'LSR', 'XS', 'XR']
     indp_var_num = len(indp_vars)
 
     j0 = 40
@@ -400,13 +402,13 @@ def ext_result(var_name, indp_vars, op_dir=None, f_name='cl-series'):
         var_data['Cd'].append(CD)
         var_data['Cm'].append(Cm)
         var_data['AoA'].append(AoA)
-        var_data['X1'].append(fF.getValue('1', 'X'))
-        var_data['Mw1'].append(fF.getValue('1', 'Mw'))
-        var_data['MwL'].append(fF.getValue('L', 'Mw'))
-        var_data['mUy'].append(fF.getValue('mUy', 'dudy'))
-        var_data['LSR'].append(fF.getValue('LSR'))
-        var_data['XS'].append(fF.getValue('S', 'X'))
-        var_data['XR'].append(fF.getValue('R', 'X'))
+        # var_data['X1'].append(fF.getValue('1', 'X'))
+        # var_data['Mw1'].append(fF.getValue('1', 'Mw'))
+        # var_data['MwL'].append(fF.getValue('L', 'Mw'))
+        # var_data['mUy'].append(fF.getValue('mUy', 'dudy'))
+        # var_data['LSR'].append(fF.getValue('LSR'))
+        # var_data['XS'].append(fF.getValue('S', 'X'))
+        # var_data['XR'].append(fF.getValue('R', 'X'))
 
         with open('Mw.dat', 'a') as f:
             nn = fF.x.shape[0]
@@ -431,6 +433,42 @@ def ext_result(var_name, indp_vars, op_dir=None, f_name='cl-series'):
 
     return var_data
 
+
+def get_buffet(aoas, clss, cdss, d_aoa=0.1):
+    f_cdcl_aoa_all = pchip(aoas, np.array(clss) / np.array(cdss))
+    f_cl_aoa_all = pchip(aoas, np.array(clss))
+    aoa_refs = list(np.arange(-2, 4, 0.05))
+
+    max_i = np.argmax(f_cdcl_aoa_all(aoa_refs))
+    max_aoa = aoa_refs[max_i]
+    # print(max_i, max_aoa)
+
+    linear_aoas = np.arange(max_aoa - 2.0, max_aoa, 0.1)
+    reg = LinearRegression().fit(linear_aoas.reshape(-1,1), f_cl_aoa_all(linear_aoas))
+    # print(reg.coef_[0], reg.intercept_)
+    reg_k = reg.coef_[0]
+    reg_b = reg.intercept_
+
+    d_b = - d_aoa * reg_k
+
+    # f_cl_aoa = pchip(aoas[max_i:], clss[max_i:])
+    step_aoa = np.arange(max_aoa, aoas[-1], 0.001)
+
+    delta = f_cl_aoa_all(step_aoa) - (reg_k * step_aoa + reg_b + d_b)
+
+    for idx in range(len(delta)-1):
+        if delta[idx] * delta[idx+1] < 0:
+            aoa_buf = step_aoa[idx] + 0.001 * delta[idx] / (delta[idx] - delta[idx+1])
+            cl_buf = f_cl_aoa_all(aoa_buf)
+            break
+    else:
+        print('Warning:  buffet not found')
+        aoa_buf = None
+        cl_buf = None
+
+    # print(aoa_buf, cl_buf)
+
+    return (aoa_buf, cl_buf)
 
 if __name__ == "__main__":
     '''
