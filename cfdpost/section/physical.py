@@ -205,6 +205,7 @@ class PhysicalSec(PhysicalLine):
 
         'L': ['upper LE', _i, _X],                  # suction peak near leading edge on upper surface
         'T': ['upper TE', _i, _X],                  # trailing edge upper surface (98% chord length)
+        'H': ['upper surface max Ma', _i, _X],      # position of lower upper maximum Mach number
         'S': ['separation start', _i, _X],          # separation start position
         'R': ['reattachment', _i, _X],              # reattachment position
         'Q': ['lower LE', _i, _X],                  # suction peak near leading edge on lower surface
@@ -214,13 +215,14 @@ class PhysicalSec(PhysicalLine):
         'F': ['shock foot', _i, _X],                # shock foot position
         '1': ['shock front', _i, _X],               # shock wave front position
         '3': ['shock hind', _i, _X],                # position of just downstream the shock
-        'D': ['dent on plateau', _i, _X],           # dent on the suction plateau
+        'D': ['dent on plateau', _i, _X],           # largest dent on the suction plateau
         'U': ['local sonic', _i, _X],               # local sonic position
-                                                    # Note: for weak shock waves, may not reach Mw=1
-                                                    #       define position of U as Mw minimal extreme point after shock foot
+        'B': ['1st dent after L', _i, _X],          # first dent after suction peak [X_L, X_L+0.1]
+        #                                           # Note: for weak shock waves, may not reach Mw=1
+        #                                           #       define position of U as Mw minimal extreme point after shock foot
         'A': ['maximum Mw after shock', _i, _X],    # maximum wall Mach number after shock wave (or equal to 3)
         'N': ['new flat boundary', _i, _X],         # starting position of new flat boundary
-                                                    # most of the time, A == N
+        #                                           # most of the time, A == N
         'Hi':  ['maximum Hi', _i, _X],              # position of maximum Hi
         'Hc':  ['maximum Hc', _i, _X],              # position of maximum Hc
         
@@ -230,8 +232,16 @@ class PhysicalSec(PhysicalLine):
         'lSW': ['single shock', _value],            # single shock wave flag
         'DCp': ['shock strength', _value],          # Cp change through shock wave
         'Err': ['suc Cp area', _value],             # Cp integral of suction plateau fluctuation
-        'DMp': ['Mw dent on plateau', _value],      # Mw dent on suction plateau
+        'FSp': ['fluctuation suc-plat', _value],    # Mw fluctuation of suction plateau
+        'DMp': ['Mw dent on plateau', _value],      # dMw of Mw dent on suction plateau
         'CLU': ['upper CL', _value],                # CL of upper surface
+        'CLL': ['lower CL', _value],                # CL of lower surface
+        'CdU': ['upper Cd', _value],                # Cdp of upper surface
+        'CdL': ['lower Cd', _value],                # Cdp of lower surface
+        'CLw': ['windward CL', _value],             # CL of windward surfaces (before crest point)
+        'Cdw': ['windward Cdp', _value],            # Cdp of windward surfaces (before crest point)
+        'CLl': ['leeward CL', _value],              # CL of leeward surfaces (behind crest point)
+        'Cdl': ['leeward Cdp', _value],             # Cdp of leeward surfaces (behind crest point)
         'kaf': ['slope aft', _value]                # average Mw slope of the aft upper surface (3/N~T)
     }
 
@@ -280,11 +290,11 @@ class PhysicalSec(PhysicalLine):
         y_  = np.append(self.y[iLE:0:-1], self.y[0])
         gl  = interp1d(x_, y_, kind='cubic')
 
-        self.normX = np.arange(0.0, 1.0, 0.001)
-        self.yu = gu(self.normX)
-        self.yl = gl(self.normX)
-        self.mu = fmw(self.normX)
-        self.hu = fhu(self.normX)
+        self.xx = np.arange(0.0, 1.0, 0.001)
+        self.yu = gu(self.xx)
+        self.yl = gl(self.xx)
+        self.mu = fmw(self.xx)
+        self.hu = fhu(self.xx)
         
         self.iLE = iLE
 
@@ -301,10 +311,15 @@ class PhysicalSec(PhysicalLine):
         self.iLE = iLE
 
         fmw = interp1d(self.x[iLE:], self.Mw[iLE:], kind='cubic')
-        self.normX = np.arange(0.0, 1.0, 0.001)
-        self.mu = fmw(self.normX)
+        self.xx = np.arange(0.0, 1.0, 0.001)
+        self.mu = fmw(self.xx)
 
-
+    @property
+    def n_point(self):
+        '''
+        Number of points in this section
+        '''
+        return self.x.shape[0]
 
     @staticmethod
     def IsentropicCp(Ma, Minf: float, g=1.4):
@@ -324,30 +339,38 @@ class PhysicalSec(PhysicalLine):
 
         return Cp
 
-    def Cp2Mw(self, n_ref=100, M_max=2.0):
+    @staticmethod
+    def toMw(Cp: np.array, Minf: float, n_ref=100, M_max=2.0):
         '''
         Converting Cp to wall Mach number
         '''
         Ma_ref = np.linspace(0.0, M_max, n_ref)
-        Cp_ref = self.IsentropicCp(Ma_ref, self.Minf)
-        f = interp1d(Cp_ref, Ma_ref, kind='cubic')
-
-        Cp_ = self.Cp.copy()
+        Cp_ref = PhysicalSec.IsentropicCp(Ma_ref, Minf)
+        f   = interp1d(Cp_ref, Ma_ref, kind='cubic')
+        Cp_ = Cp.copy()
         Cp_ = np.clip(Cp_, Cp_ref[-1], Cp_ref[0])
-
         return f(Cp_)
 
+    def Cp2Mw(self, n_ref=100, M_max=2.0):
+        '''
+        Converting Cp to wall Mach number
+        '''
+        Mw = PhysicalSec.toMw(self.Cp, self.Minf, n_ref=n_ref, M_max=M_max)
+
+        return Mw
+
     @staticmethod
-    def ShapeFactor(sS, VtS, Tw: float, iUe: int):
+    def ShapeFactor(sS, VtS, Tw: float, iUe: int, neglect_error=False):
         '''
         Calculate shape factor Hi & Hc by mesh points on a line pertenticular to the wall.
 
         ### Inputs:
         ```text
-        sS:     ndarray (n), distance of mesh points to wall
-        VtS:    ndarray (n), velocity component of mesh points (parallel to the wall)
+        sS:     ndarray [nMax], distance of mesh points to wall
+        VtS:    ndarray [nMax], velocity component of mesh points (parallel to the wall)
         Tw:     wall temperature (K)
         iUe:    index of mesh point locating the outer velocity Ue
+        neglect_error:  if True, set shape factor to 0 when error occurs
         ```
 
         ### Return:
@@ -358,7 +381,7 @@ class PhysicalSec(PhysicalLine):
 
         ### Note:
         ```text
-        XR  => 物面参考点，考察以 XR 为起点，物面法向 nR 方向上的数据点，共 nHi 个数据点
+        XR  => 物面参考点，考察以 XR 为起点，物面法向 nR 方向上的数据点，共 nMax 个数据点
         sS  => 数据点到物面距离
         VtS => 数据点速度在物面方向的分量
 
@@ -369,11 +392,21 @@ class PhysicalSec(PhysicalLine):
         Ue      测试结果显示，直接取最大Ue较为合理，取一定范围内平均，或取固定网格的值，效果不好
         ```
         '''
-        iUe = min(sS.shape[0], iUe)
+        nMax= sS.shape[0]
         Ue = VtS[iUe]
         se = sS[iUe]
         ds = 0.0
         tt = 0.0
+
+        if iUe>=nMax or iUe<=int(0.2*nMax):
+            if neglect_error:
+                return 0.0, 0.0
+            else:
+                print()
+                print('Vts: velocity component of mesh points')
+                print(VtS)
+                print()
+                raise Exception('Error [ShapeFactor]: iUe %d not reasonable (nMax=%d)'%(iUe, nMax))
 
         for i in range(iUe-1):
             a1 = Ue-VtS[i]
@@ -391,7 +424,7 @@ class PhysicalSec(PhysicalLine):
         return Hi, Hc
 
     @staticmethod
-    def getHi(X, Y, U, V, T, j0: int, j1: int, nHi: int):
+    def getHi(X, Y, U, V, T, j0: int, j1: int, nHi: int, neglect_error=False):
         '''
         Calculate shape factor Hi & Hc from field data
 
@@ -401,6 +434,7 @@ class PhysicalSec(PhysicalLine):
         j0:     j index of the lower surface TE
         j1:     j index of the upper surface TE
         nHi:    maximum number of mesh points in k direction for boundary layer
+        neglect_error:  if True, set shape factor to 0 when error occurs
         ```
 
         ### Return:
@@ -471,7 +505,8 @@ class PhysicalSec(PhysicalLine):
 
         #* Calculate Hi & Hc
         for j in range(nn):
-            Hi[j], Hc[j] = PhysicalSec.ShapeFactor(sS[j,:], VtS[j,:], Tw[j], iUe[j])
+            Hi[j], Hc[j] = PhysicalSec.ShapeFactor(sS[j,:], VtS[j,:], 
+                            Tw[j], iUe[j], neglect_error=neglect_error)
 
         #* Limit leading edge Hi
         r1 = 1.0
@@ -495,6 +530,7 @@ class PhysicalSec(PhysicalLine):
             if X[jj,0]<0.05 and jj>=iLE:
                 Hi[j] = r2
                 Hc[j] = r4
+
         return Hi, Hc, (Tw, dudy)
 
     
@@ -608,7 +644,7 @@ class PhysicalSec(PhysicalLine):
         return i0, i1 
 
     #TODO: locate the position of flow features
-    def locate_basic(self):
+    def locate_basic(self, dMwcri_L=1.0):
         '''
         Locate the index and position of basic flow features.
 
@@ -623,31 +659,28 @@ class PhysicalSec(PhysicalLine):
         #TODO: Basic features
         #* L => suction peak near leading edge on upper surface
         # 1: maximum extreme point
-        # 2: outermost point in X + Mw = 0 direction
+        # 2: dMw/dx = 1
         i_L = 0
-        x_L = 0.0
         for i in range(int(0.25*nn)):
             ii = i + iLE
+            if X[ii] > 0.2:
+                break
             if M[ii-1]<=M[ii] and M[ii]>=M[ii+1]:
                 i_L = ii
-                x_L = X[ii]
                 break
-
+    
         if i_L == 0:
-            max_L = -1.0e6
-            vec = np.array([-1.0,1.0])
-
+            dMw2 = 0.0
             for i in range(int(0.25*nn)):
-                ii = i + iLE
-                vv = np.array([X[ii], M[ii]])
-                dd = np.dot(vv, vec)
-                if dd > max_L:
-                    max_L = dd
+                ii = i + iLE+1
+                dMw1 = dMw2
+                dMw2 = (M[ii+1]-M[ii])/(X[ii+1]-X[ii])
+                if dMw1>=dMwcri_L and dMw2<dMwcri_L:
                     i_L = ii
-                    x_L = X[ii]
+                    break
 
         self.xf_dict['L'][1] = i_L
-        self.xf_dict['L'][2] = x_L
+        self.xf_dict['L'][2] = X[i_L]
 
         #* T => trailing edge upper surface (98% chord length)
         for i in range(int(0.2*nn)):
@@ -657,6 +690,17 @@ class PhysicalSec(PhysicalLine):
                 self.xf_dict['T'][2] = 0.98
                 break
         
+        #* H => position of upper surface maximum Mach number
+        i_H = 0
+        max1 = -1.0
+        for i in np.arange(iLE, nn-2, 1):
+            if M[i-1]<=M[i] and M[i+1]<=M[i] and M[i]>max1:
+                max1 = M[i]
+                i_H = i
+
+        self.xf_dict['H'][1] = i_H
+        self.xf_dict['H'][2] = X[i_H]
+
         #* Q => suction peak near leading edge on lower surface
         for i in range(int(self.paras['Qratio']*0.5*nn)):
             ii = iLE - i
@@ -699,9 +743,10 @@ class PhysicalSec(PhysicalLine):
         ret_flag = False
 
         min_Uy = 1e6
+        i_S = 0
         for i in range(int(0.5*nn)):
             ii = iLE + i
-            if X[ii]<0.2:
+            if X[ii]<0.02:
                 continue
             if X[ii]>0.98:
                 break
@@ -733,10 +778,11 @@ class PhysicalSec(PhysicalLine):
         ### Get value of: Cu, Cl, tu, tl, tm
         '''
         X  = self.x
-        xx = self.normX
+        xx = self.xx
         yu = self.yu
         yl = self.yl
         iLE = self.iLE
+        n0 = xx.shape[0]
 
         #* tm => maximum thickness
         #* tu => highest point on upper surface
@@ -756,64 +802,69 @@ class PhysicalSec(PhysicalLine):
         aa = self.AoA/180.0*np.pi
         x0 = np.array([0.0, 0.0])
         x1 = np.array([np.cos(aa), np.sin(aa)])
-        rr = -1.0
-        rc = 0.0
-        xc1= 0.0
-        for i in range(xx.shape[0]):
-            xt = np.array([xx[i], yu[i]])
-            s, _ = ratio_vec(x0, x1, xt)
-            if s < rr:
-                break
-            if s > rc:
-                rc = s
-                xc1 = xx[i]
-            rr = s
 
-        self.xf_dict['Cu'][1] = np.argmin(np.abs(X[iLE:]-xc1)) + iLE
-        self.xf_dict['Cu'][2] = xc1
+        ds = np.zeros(n0)
+        for i in range(n0):
+            xt = np.array([xx[i], yu[i]])
+            if xx[i] > 0.9:
+                continue
+            ds[i], _ = ratio_vec(x0, x1, xt)
+        ii = np.argmax(ds)
+
+        self.xf_dict['Cu'][1] = np.argmin(np.abs(X[iLE:]-xx[ii])) + iLE
+        self.xf_dict['Cu'][2] = xx[ii]
 
         #* Cl => crest point on lower surface
-        rr = -1.0
-        rc = 0.0
-        xc2= 0.0
-        for i in range(xx.shape[0]):
+        ds = np.zeros(n0)
+        for i in range(n0):
+            if xx[i] > 0.9:
+                continue
             xt = np.array([xx[i], yl[i]])
-            s, _ = ratio_vec(x0, x1, xt)
-            if s < rr:
-                break
-            if s > rc:
-                rc = s
-                xc2 = xx[i]
-            rr = s
+            ds[i], _ = ratio_vec(x0, x1, xt)
+        ii = np.argmax(ds)
 
-        self.xf_dict['Cl'][1] = np.argmin(np.abs(X[:iLE]-xc2))
-        self.xf_dict['Cl'][2] = xc2
+        self.xf_dict['Cl'][1] = np.argmin(np.abs(X[:iLE]-xx[ii]))
+        self.xf_dict['Cl'][2] = xx[ii]
 
-    def locate_shock(self, dMwcri_1=-1.0):
+    def locate_shock(self, dMwcri_1=-1.0, info=False):
         '''
         Locate the index and position of shock wave related flow features.
 
-        ### Get value of: 1, 3, F, U, D, A
+        ### Get value of: 1, 3, F, U, D, A, B
         
         ### Inputs:
         ```text
         dMwcri_1: critical value locating shock wave front
         ```
         '''
-        X   = self.x
-        xx  = self.normX
-        mu  = self.mu
+        X   = self.x        # [n]
+        xx  = self.xx       # [1000]
+        mu  = self.mu       # [1000]
         nn  = xx.shape[0]
         iLE = self.iLE
 
         dMw = np.zeros(nn)
         for i in range(nn-1):
-            if xx[i] > 0.98:
+            if xx[i]<=0.02:
+                continue
+            if xx[i]>=0.98:
                 continue
             dMw[i] = (mu[i + 1] - mu[i]) / (xx[i + 1] - xx[i])
             dMw[i] = min(dMw[i], 2)
 
-        flag = PhysicalSec.check_singleshock(xx, mu, dMw)
+        d2Mw = np.zeros(nn)
+        for i in range(nn-1):
+            if xx[i]<0.02 or xx[i]>0.95:
+                continue
+            
+            #d2Mw[i] = (dMw[i+2]+dMw[i+1]-dMw[i]-dMw[i-1])/2/(xx[i+1]-xx[i-1])
+            #d2Mw[i] = (dMw[i+1]-dMw[i-1])/(xx[i+1]-xx[i-1])
+            d2Mw[i] = (0.5*dMw[i+7]+0.5*dMw[i+4]+2*dMw[i+1]-
+                        2*dMw[i]-0.5*dMw[i-3]-0.5*dMw[i-6])/4.5/(xx[i+1]-xx[i-1])
+
+        #* Check shock and shock properties
+        flag, i_F, i_1, i_U, i_3 = PhysicalSec.check_singleshock(xx, mu, dMw, d2Mw, dMwcri_1, info=info)
+
         self.xf_dict['lSW'][1] = flag
         if not flag==1:
             f = open('error.txt', 'w', encoding='utf-8')
@@ -822,77 +873,80 @@ class PhysicalSec(PhysicalLine):
             return 0
 
         #* F => shock foot position
-        i_F = np.argmin(dMw)
-        x_F = xx[i_F]
-        self.xf_dict['F'][1] = np.argmin(np.abs(X[iLE:]-x_F)) + iLE
-        self.xf_dict['F'][2] = x_F
+        self.xf_dict['F'][1] = np.argmin(np.abs(X[iLE:]-xx[i_F])) + iLE
+        self.xf_dict['F'][2] = xx[i_F]
 
         #* 1 => shock wave front position
-        # Find the kink position of dMw in range [x_F-0.2, x_F], defined as dMw = -1
-        i_1 = 0
-        for i in np.arange(i_F, 1, -1):
-            if xx[i]<x_F-0.2:
-                break
-            if dMw[i]>=dMwcri_1 and dMw[i+1]<dMwcri_1:
-                i_1 = i
-                break
-        x_1 = xx[i_1]
-        self.xf_dict['1'][1] = np.argmin(np.abs(X[iLE:]-x_1)) + iLE
-        self.xf_dict['1'][2] = x_1
+        self.xf_dict['1'][1] = np.argmin(np.abs(X[iLE:]-xx[i_1])) + iLE
+        self.xf_dict['1'][2] = xx[i_1]
 
         #* 3 => position of just downstream the shock
-        # Find the first flat position of Mw in range [x_F, x_F+0.2], defined as dMw = 0 or -1
-        i_3 = 0
-        for i in np.arange(i_F, nn-1, 1):
-            if xx[i]>x_F+0.2:
-                break
-            if dMw[i]<=dMwcri_1 and dMw[i+1]>dMwcri_1:
-                i_3 = i
-            if dMw[i]<=0.0 and dMw[i+1]>0.0:
-                i_3 = i
-                break
-        x_3 = xx[i_3]
-        self.xf_dict['3'][1] = np.argmin(np.abs(X[iLE:]-x_3)) + iLE
-        self.xf_dict['3'][2] = x_3
+        self.xf_dict['3'][1] = np.argmin(np.abs(X[iLE:]-xx[i_3])) + iLE
+        self.xf_dict['3'][2] = xx[i_3]
+        #* U => local sonic position
+        self.xf_dict['U'][1] = np.argmin(np.abs(X[iLE:]-xx[i_U])) + iLE
+        self.xf_dict['U'][2] = xx[i_U]
 
         #* D => dent on the suction plateau
-        # minimum Mw between L and 1
+        # maximum (linear Mw - actual Mw) between L and 1
+        x_1 = self.xf_dict['1'][2]
         x_L = max(self.xf_dict['L'][2], 0.05)
+        m_1 = self.getValue('1','Mw')
+        m_L = self.getValue('L','Mw')
+        lL1 = x_1-x_L
         i_D = 0
-        min_D = 10.0
+        min_D = 0.0
         for i in np.arange(2, i_1-1, 1):
 
             if xx[i]<x_L:
                 continue
 
-            if mu[i-1]>=mu[i] and mu[i]<=mu[i+1] and mu[i]<min_D:
+            tt = (xx[i]-x_L)/lL1
+            ss = (1-tt)*m_L + tt*m_1
+            dM = ss - mu[i]
+
+            if dM > min_D:
                 i_D = i
-                min_D = mu[i]
+                min_D = dM
 
-        x_D = xx[i_D]
-        self.xf_dict['D'][1] = np.argmin(np.abs(X[iLE:]-x_D)) + iLE
-        self.xf_dict['D'][2] = x_D
+        if i_D==0:
+            self.xf_dict['D'][1] = self.xf_dict['L'][1]
+            self.xf_dict['D'][2] = self.xf_dict['L'][2]
+        else:
+            self.xf_dict['D'][1] = np.argmin(np.abs(X[iLE:]-xx[i_D])) + iLE
+            self.xf_dict['D'][2] = xx[i_D]
 
-        #* U => local sonic position
-        i_U = 0
-        for i in np.arange(i_1, i_3, 1):
-            if mu[i]>=1.0 and mu[i+1]<1.0:
-                i_U = i
-                break
-        x_U = xx[i_U]
-        self.xf_dict['U'][1] = np.argmin(np.abs(X[iLE:]-x_U)) + iLE
-        self.xf_dict['U'][2] = x_U
+        #* B => first dent after suction peak [X_L, X_L+0.1]
+        # minimum Mw between L and L+0.1
+        x_L = self.xf_dict['L'][2]
+        i_B = 0
+        for i in np.arange(2, i_1-1, 1):
+
+            if xx[i]<x_L or xx[i]>x_L+0.1:
+                continue
+
+            if mu[i-1]>=mu[i] and mu[i]<=mu[i+1] and i_B==0:
+                i_B = i
+
+        if i_B == 0:
+            self.xf_dict['B'][1] = self.xf_dict['L'][1]
+            self.xf_dict['B'][2] = self.xf_dict['L'][2]
+        else:
+            self.xf_dict['B'][1] = np.argmin(np.abs(X[iLE:]-xx[i_B])) + iLE
+            self.xf_dict['B'][2] = xx[i_B]
 
         #* A => maximum Mw after shock
-        # Find the maximum position of Mw in range [x_3, x_3+0.4]
+        # Find the maximum position of Mw in range [x_3, 0.9]
         i_A = 0
         max_A = 0.0
         for i in np.arange(i_3, nn-1, 1):
-            if xx[i]>x_3+0.4:
+            if xx[i]>0.9:
                 break
             if mu[i]>max_A:
                 i_A = i
                 max_A = mu[i]
+            elif mu[i]>=mu[i_3]*0.8 and mu[i]>mu[i-1] and mu[i]>mu[i+1]:
+                i_A = i
 
         x_A = xx[i_A]
         self.xf_dict['A'][1] = np.argmin(np.abs(X[iLE:]-x_A)) + iLE
@@ -909,7 +963,7 @@ class PhysicalSec(PhysicalLine):
         ### Get value of: N, Hi, Hc
         '''
         X   = self.x
-        xx  = self.normX
+        xx  = self.xx
         hu  = self.hu
         nn  = xx.shape[0]
         iLE = self.iLE
@@ -948,75 +1002,204 @@ class PhysicalSec(PhysicalLine):
         self.xf_dict['N'][2] = x_N
 
     @staticmethod
-    def check_singleshock(xu, Mw, dMw, dMwcri_F=-2.0):
+    def shock_property(xu, mu, dMw, d2Mw, dMwcri_1):
+        '''
+        >>> i_F, i_1, i_U, i_3 = shock_property(xu, mu, dMw, d2Mw, dMwcri_1)
+
+        ### Return:
+        ```text
+        Index of xu for: F, 1, U, 3
+        ```
+        '''
+        nn  = xu.shape[0]
+
+        #* F => shock foot position
+        i_F = np.argmin(dMw)
+        x_F = xu[i_F]
+
+        #* 1 => shock wave front position
+        # Find the kink position of dMw in range [x_F-0.2, x_F], defined as dMw = -1
+        i_1 = 0
+        i_cri = 0
+        i_md2 = 0
+        for i in np.arange(i_F, 1, -1):
+
+            # 1. Within the range of [x_F-0.2, x_F]
+            if xu[i]<x_F-0.2:
+                break
+
+            # 2. Locate dMw = dMwcri_1 (tend to go too much upstream)
+            if dMw[i]>=dMwcri_1 and dMw[i+1]<dMwcri_1 and i_cri==0:
+                i_cri = i
+
+            # 3. Locate min d2Mw/dx2 (tend to go too much downstream)
+            if d2Mw[i]<=d2Mw[i-1] and d2Mw[i]>d2Mw[i+1] and i_md2==0:
+                i_md2 = i
+        
+        if i_md2-i_cri > 2*(i_F-i_md2):
+            i_1 = i_md2
+        elif 2*(i_md2-i_cri) < i_F-i_md2:
+            i_1 = i_cri
+        else:
+            i_1 = int(0.5*(i_cri+i_md2))
+
+        '''
+        print(i_cri, i_md2, i_F, xu[i_cri], xu[i_md2], dMw[i_md2], dMw[i_F])
+
+        import matplotlib.pyplot as plt
+        plt.plot(xu, mu, 'b')
+        plt.plot(xu, d2Mw/1000, 'r')
+        plt.plot([xu[i_cri], xu[i_md2]], [mu[i_cri], mu[i_md2]], 'bo')
+        plt.plot([xu[i_1]], [mu[i_1]], 'ro')
+        plt.show()
+        '''
+
+        #* 3 => position of just downstream the shock
+        # Find the first flat position of Mw in range [x_F, x_F+0.2], defined as dMw = 0 or -1
+        i_3 = 0
+        i_cri = 0
+        i_md2 = 0
+        i_flat = 0
+        for i in np.arange(i_F, nn-1, 1):
+
+            # 1. Within the range of [x_F, x_F+0.2]
+            if xu[i]>x_F+0.2:
+                break
+
+            # 2. Locate dMw = dMwcri_1 (tend to go too much downstream)
+            if dMw[i]<=dMwcri_1 and dMw[i+1]>dMwcri_1 and i_cri==0:
+                i_cri = i
+
+            # 3. Locate min d2Mw/dx2 (tend to go too much upstream)
+            if d2Mw[i]<=d2Mw[i-1] and d2Mw[i]>d2Mw[i+1] and i_md2==0:
+                i_md2 = i
+
+            # 4. Locate the first flat position of Mw
+            if dMw[i]<=0.0 and dMw[i+1]>0.0:
+                i_flat = i
+
+        if i_flat!=0 and i_flat-i_F < 2*(i_cri-i_F):
+            i_3 = i_flat
+        elif i_cri-i_md2 > 2*(i_md2-i_F):
+            i_3 = i_md2
+        elif 2*(i_cri-i_md2) < i_md2-i_F:
+            i_3 = i_cri
+        else:
+            i_3 = int(0.5*(i_cri+i_md2))
+
+        '''
+        print('F     %3d  %.2f'%(i_F,   xu[i_F]))
+        print('d2Mw  %3d  %.2f'%(i_md2, xu[i_md2]))
+        print('cri   %3d  %.2f'%(i_cri, xu[i_cri]))
+        print('dMw=0 %3d  %.2f'%(i_flat,xu[i_flat]))
+        print('3     %3d  %.2f'%(i_3,   xu[i_3]))
+        print()
+        '''
+
+        #* U => local sonic position
+        i_U = 0
+        for i in np.arange(i_1, i_3, 1):
+            if mu[i]>=1.0 and mu[i+1]<1.0:
+                i_U = i
+                break
+        
+        #* Neglect small Mw bump near leading edge
+        if xu[i_1]<0.1 and mu[i_1]<1.10:
+            i_1=0; i_U=0; i_3=0
+
+        return i_F, i_1, i_U, i_3
+
+    @staticmethod
+    def check_singleshock(xu, mu, dMw, d2Mw, dMwcri_1, info=False):
         '''
         Check whether is single shock wave or not
 
+        >>> flag, i_F, i_1, i_U, i_3 = check_singleshock(xu, mu, dMw, d2Mw, dMwcri_1)
+
         ### Inputs:
         ```text
-        xx:     ndarray, x location
-        Mw:     ndarray, wall Mach number
+        xu:     ndarray, x location
+        mu:     ndarray, wall Mach number of upper surface
         dMw:    ndarray, slope of wall Mach number
-        dMwcri_F: critical value filtering shock wave
+        dMwcri_1: critical value locating shock wave front
         ```
 
-        ### Return: flag
+        ### flag: 
         ```text
-        1:  single shock wave
-        0:  shockless
+         1: single shock wave
+         0: shockless
         -1: multiple shock waves 
         ```
         '''
-        nn = xu.shape[0]
-        dm = dMw.copy()
-        i1 = np.argmin(dm)
-        d1 = dm[i1]
+        #* Get 1st shock
+        i_F, i_1, i_U, i_3 = PhysicalSec.shock_property(xu, mu, dMw, d2Mw, dMwcri_1)
+        d_F = dMw[i_F]
 
-        # Check if shockless
-        if Mw[i1]<1.0 or dm[i1]>dMwcri_F:
-            return 0
+        #* Check if shockless
+        # Check if Mw jump exists and M1>1.0
+        if d_F>dMwcri_1 or mu[i_1]<1.0 or i_1==0:
+            if info:
+                print('  Shockless:    XF=%.2f MF=%.2f dM/dX=%.2f'%(xu[i_F], mu[i_F], d_F))
+            return 0, 0, 0, 0, 0
 
-        # Check if second shock wave exists
-        for i in np.arange(i1, nn, 1, dtype=int):
+        #* Check if 2nd shock wave exists
+        # Remove first shock
+        dm  = dMw.copy()
+        d2m = d2Mw.copy()
+        nn  = xu.shape[0]
+        for i in np.arange(i_F, nn, 1, dtype=int):
             if dm[i]<=0.0:
                 dm[i]=0.0
+                d2m[i]=0.0
             else:
                 break
-        for i in np.arange(i1, 0, -1, dtype=int):
+        for i in np.arange(i_F, 0, -1, dtype=int):
             if dm[i]<=0.0:
                 dm[i]=0.0
+                d2m[i]=0.0
             else:
                 break
+        
+        # Locate second shock
+        dMwcri_F = max(dMwcri_1, 0.5*d_F)
+        _iF, _i1, _iU, _i3 = PhysicalSec.shock_property(xu, mu, dm, d2m, dMwcri_1)
+        if dm[_iF]<dMwcri_F and _i1!=0 and _i3!=0:
+            # Locate sharp change of Mw
 
-        i2 = np.argmin(dm)
-        if Mw[i2]>1.0 and dm[i2]<max(dMwcri_F, 0.5*d1):
-            return -1
+            if mu[_i1]>1.0 and mu[_i3]<1.05:
+                # Check supersonic wave front and 'subsonic' wave hind
+                if info:
+                    print('  Second shock: X1=%.2f M1=%.2f M2=%.2f'%(xu[_i1], mu[_i1], mu[_i3]))
+                return -1, 0, 0, 0, 0
 
-        return 1
+        return 1, i_F, i_1, i_U, i_3
 
     def aux_features(self):
         '''
         Calculate auxiliary features based on basic, geo, and shock features.
 
-        ### Get value of: Length, lSW, DCp, Err, DMp, CLU, kaf
+        ### Get value of: Length, lSW, DCp, Err, DMp, FSp, kaf, 
+        ### CLU, CLL, CLw, Cdw, CLl, Cdl
         '''
         X  = self.x
-        xx = self.normX
-        mu = self.mu
-        nn = xx.shape[0]
+        Y  = self.y
         x1 = self.xf_dict['1'][2]
+        n0 = len(X)
         
         self.xf_dict['L1U'][1] = self.xf_dict['U'][2] - x1
         self.xf_dict['L13'][1] = self.xf_dict['3'][2] - x1
         self.xf_dict['LSR'][1] = self.xf_dict['R'][2] - self.xf_dict['S'][2]
         self.xf_dict['DCp'][1] = self.getValue('3','Cp') - self.getValue('1','Cp')
 
-        rr = np.cos(self.AoA/180.0*np.pi)
+        cosA = np.cos(self.AoA/180.0*np.pi)
+        sinA = np.sin(self.AoA/180.0*np.pi)
         #* Err => Cp integral of suction plateau fluctuation
         #* DMp => Mw dent on suction plateau
-        # If can not find suction peak, err = 0, DMp = 0.0
+        #* FSp => Mw fluctuation of suction plateau
+        # If can not find suction peak, err = 0, DMp = 0.0, FSp = 0.0
         Err = 0.0
         DMp = 0.0
+        FSp = 0.0
         iL  = self.xf_dict['L'][1]
         if iL!=0:
             i1 = self.xf_dict['1'][1]
@@ -1028,6 +1211,8 @@ class PhysicalSec(PhysicalLine):
             Mw0 = self.getValue('L','Mw')
             Mw1 = self.getValue('1','Mw')
             lL1 = x1-xL
+            bump_ = 0.0
+            dent_ = 0.0
 
             for i in np.arange(iL, i1, 1):
 
@@ -1039,15 +1224,22 @@ class PhysicalSec(PhysicalLine):
                 ss = (1-tt)*Mw0 + tt*Mw1
                 DMp = max(DMp, ss-self.Mw[i])
 
-        self.xf_dict['Err'][1] = abs(Err)*rr
+                local_avg_mw = (self.Mw[i-2]+self.Mw[i]+self.Mw[i+2])/3.0
+
+                if self.Mw[i-4]>=local_avg_mw and local_avg_mw<=self.Mw[i+4] and dent_<=0.0:
+                    if bump_>0.0:
+                        FSp += bump_ - local_avg_mw
+                    dent_ = local_avg_mw
+                    bump_ = 0.0
+                elif self.Mw[i-4]<=local_avg_mw and local_avg_mw>=self.Mw[i+4] and bump_<=0.0:
+                    if dent_>0.0:
+                        FSp += local_avg_mw - dent_
+                    bump_ = local_avg_mw
+                    dent_ = 0.0
+
+        self.xf_dict['Err'][1] = abs(Err)*cosA
         self.xf_dict['DMp'][1] = DMp
-
-        #* CLU => CL of upper surface
-        CLU = 0.0
-        for i in np.arange(self.iLE, len(X)-1, 1):
-            CLU += 0.5*(self.Cp[i]+self.Cp[i+1])*(X[i+1]-X[i])
-
-        self.xf_dict['CLU'][1] = abs(CLU)*rr
+        self.xf_dict['FSp'][1] = FSp
 
         #* kaf => average Mw slope of the aft upper surface (3/N~T)
         xN  = self.xf_dict['N'][2]
@@ -1060,14 +1252,60 @@ class PhysicalSec(PhysicalLine):
 
         self.xf_dict['kaf'][1] = (mT-mN)/(xT-xN)
 
-    def extract_features(self):
+        #* CLU => CL of upper surface
+        # wall vector = [dx,dy]
+        # outward wall vector = [-dy,dx]
+        # outward pressure force vector = Cp*[dy,-dx]
+        PFy = 0.0   # y direction pressure force
+        PFx = 0.0   # x direction pressure force
+
+        for i in np.arange(self.iLE, n0-1, 1):
+            Cp_ = 0.5*(self.Cp[i]+self.Cp[i+1])
+            PFx += Cp_*(Y[i+1]-Y[i])
+            PFy += Cp_*(X[i]-X[i+1])
+        self.xf_dict['CLU'][1] = PFy*cosA - PFx*sinA
+        self.xf_dict['CdU'][1] = PFy*sinA + PFx*cosA
+        
+        PFx = 0.0; PFy = 0.0
+        for i in np.arange(0, self.iLE, 1):
+            Cp_ = 0.5*(self.Cp[i]+self.Cp[i+1])
+            PFx += Cp_*(Y[i+1]-Y[i])
+            PFy += Cp_*(X[i]-X[i+1])
+        self.xf_dict['CLL'][1] = PFy*cosA - PFx*sinA
+        self.xf_dict['CdL'][1] = PFy*sinA + PFx*cosA
+
+        #* Windward and leeward pressure force (CL, Cdp)
+        icu = self.xf_dict['Cu'][1]
+        icl = self.xf_dict['Cl'][1]
+
+        PFx = 0.0; PFy = 0.0
+        for i in np.arange(0, icl, 1):          # Leeward (lower surface)
+            Cp_  = 0.5*(self.Cp[i]+self.Cp[i+1])
+            PFx += Cp_*(Y[i+1]-Y[i])
+            PFy += Cp_*(X[i]-X[i+1])
+        for i in np.arange(icu, n0-1, 1):       # Leeward (upper surface)
+            Cp_  = 0.5*(self.Cp[i]+self.Cp[i+1])
+            PFx += Cp_*(Y[i+1]-Y[i])
+            PFy += Cp_*(X[i]-X[i+1])
+        self.xf_dict['CLl'][1] = PFy*cosA - PFx*sinA
+        self.xf_dict['Cdl'][1] = PFy*sinA + PFx*cosA
+
+        PFx = 0.0; PFy = 0.0
+        for i in np.arange(icl, icu, 1):        # Windward
+            Cp_ = 0.5*(self.Cp[i]+self.Cp[i+1])
+            PFx += Cp_*(Y[i+1]-Y[i])
+            PFy += Cp_*(X[i]-X[i+1])
+        self.xf_dict['CLw'][1] = PFy*cosA - PFx*sinA
+        self.xf_dict['Cdw'][1] = PFy*sinA + PFx*cosA
+
+    def extract_features(self, info=False):
         '''
         Extract flow features list in the dictionary.
         '''
         self.locate_basic()
         self.locate_sep()
         self.locate_geo()
-        i_1 = self.locate_shock()
+        i_1 = self.locate_shock(info=info)
         self.locate_BL(i_1)
         self.aux_features()
 
