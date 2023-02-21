@@ -99,6 +99,7 @@ class PhysicalLine():
         #     return 0.0
         if not isinstance(ii, list):
             i0, i1 = self._get_i0_i1(ii)
+            # print('!', xx, i0, i1)
             return self.getValueX(xx, key=key, i0=i0, i1=i1)
         
         ff = []
@@ -117,8 +118,8 @@ class PhysicalLine():
 
         X = self.x[i0:i1]
         Y = yy[i0:i1]
-        print(i0, i1, X, Y, xx)
-        f = interp1d(X, Y, kind='cubic')
+        # print(i0, i1, X, Y, xx)
+        f = interp1d(X, Y, kind='cubic', bounds_error=False, fill_value=(Y[0], Y[-1]))
         return float(f(xx))
 
 
