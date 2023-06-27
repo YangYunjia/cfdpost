@@ -388,7 +388,7 @@ class cfl3d():
         return True
 
     @staticmethod
-    def readprt_foil(path: str, j0: int, j1: int, fname='cfl3d.prt'):
+    def readprt_foil(path: str, j0: int, j1: int, fname='cfl3d.prt', coordinate='xy'):
         '''
         Read and extract foil Cp from cfl3d.prt
 
@@ -410,7 +410,12 @@ class cfl3d():
 
         ### Return:
         ```text
-        succeed (bool), (field: X,Y,U,V,P,T,Ma,Cp,vi), (foil: x, y, Cp)
+        succeed (bool), (field: X,Y,U,V,P,T,Ma,Cp,vi), (foil: x, y, P, T, Cf)
+        ```
+        
+        ### Raise:
+        ```text
+        FileNotFoundError
         ```
         '''
 
@@ -419,12 +424,13 @@ class cfl3d():
         else:
             prt  = path+'/'+fname
 
-        if not os.path.exists(prt):
-            return False, None, None
-
         X = None
+        axis_2_idx = {'x': 3, 'y': 4, 'z': 5}
+        x_idx = axis_2_idx[coordinate[0]]
+        y_idx = axis_2_idx[coordinate[1]]
 
         f0 = open(prt, 'r')
+        counter = 0
         while True:
 
             line = f0.readline()
@@ -439,37 +445,53 @@ class cfl3d():
                 ni = int(line[-3])
                 nj = int(line[-2])
                 nk = int(line[-1])
-
-                X = np.zeros([nj, nk])
-                Y = np.zeros([nj, nk])
-                U = np.zeros([nj, nk])
-                V = np.zeros([nj, nk])
-                P = np.zeros([nj, nk])
-                T = np.zeros([nj, nk])
-                Ma = np.zeros([nj, nk])
-                Cp = np.zeros([nj, nk])
-                vi = np.zeros([nj, nk])
                 continue
 
-            if not line[0] in 'I':
-                continue
+            if line[0] in 'I':
 
-            for k in range(nk):
-                for j in range(nj):
-                    L1 = f0.readline()
-                    L1 = L1.split()
+                if counter == 0: # field
+                    counter += 1
+                    X = np.zeros([nj, nk])
+                    Y = np.zeros([nj, nk])
+                    U = np.zeros([nj, nk])
+                    V = np.zeros([nj, nk])
+                    P = np.zeros([nj, nk])
+                    T = np.zeros([nj, nk])
+                    Ma = np.zeros([nj, nk])
+                    Cp = np.zeros([nj, nk])
+                    vi = np.zeros([nj, nk])
 
-                    X [j,k] = float(L1[3])
-                    Y [j,k] = float(L1[4])
-                    U [j,k] = float(L1[6])
-                    V [j,k] = float(L1[7])
-                    P [j,k] = float(L1[9])
-                    T [j,k] = float(L1[10])
-                    Ma[j,k] = float(L1[11])
-                    Cp[j,k] = float(L1[12])
-                    vi[j,k] = float(L1[13])
+                    for k in range(nk):
+                        for j in range(nj):
+                            L1 = f0.readline().split()
 
-            break
+                            X [j,k] = float(L1[x_idx])
+                            Y [j,k] = float(L1[y_idx])
+                            U [j,k] = float(L1[6])
+                            V [j,k] = float(L1[7])
+                            P [j,k] = float(L1[9])
+                            T [j,k] = float(L1[10])
+                            Ma[j,k] = float(L1[11])
+                            Cp[j,k] = float(L1[12])
+                            vi[j,k] = float(L1[13])
+
+                elif counter == 1:
+                    counter += 1
+                    Xsurf = np.zeros((nj,))
+                    Ysurf = np.zeros((nj,))
+                    Psurf = np.zeros((nj,))
+                    Tsurf = np.zeros((nj,))
+                    Cfsurf = np.zeros((nj,))
+
+                    for j in range(2, nj):
+                        L1 = f0.readline().split()
+                        Xsurf[j-1] = float(L1[x_idx])
+                        Ysurf[j-1] = float(L1[y_idx])
+                        Psurf[j-1] = float(L1[7])
+                        Tsurf[j-1] = float(L1[8])
+                        Cfsurf[j-1] = float(L1[9])
+                    
+                    break
 
         if X is None:
             return False, None, None
@@ -477,7 +499,7 @@ class cfl3d():
         field = (X,Y,U,V,P,T,Ma,Cp,vi)
         f0.close()
 
-        foil = (X[j0:j1,0], Y[j0:j1,0], Cp[j0:j1,0])
+        foil = (Xsurf[j0:j1], Ysurf[j0:j1], Psurf[j0:j1], Tsurf[j0:j1], Cfsurf[j0:j1])
 
         return True, field, foil
 
