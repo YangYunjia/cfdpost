@@ -410,7 +410,7 @@ class cfl3d():
 
         ### Return:
         ```text
-        succeed (bool), (field: X,Y,U,V,P,T,Ma,Cp,vi), (foil: x, y, P, T, Cf)
+        succeed (bool), (field: X,Y,U,V,P,T,Ma,Cp,vi), (foil: x, y, P, T, Cf), (freestream: mach, alph, beta, reue, tinf, time)
         ```
         
         ### Raise:
@@ -430,6 +430,12 @@ class cfl3d():
         y_idx = axis_2_idx[coordinate[1]]
 
         f0 = open(prt, 'r')
+
+        # read freestream data
+        for _ in range(4): line = f0.readline()
+        freestream = [float(i) for i in line.split()]
+        print(freestream)
+
         counter = 0
         while True:
 
@@ -499,9 +505,11 @@ class cfl3d():
         field = (X,Y,U,V,P,T,Ma,Cp,vi)
         f0.close()
 
+        Psurf = (Psurf - 1.) / (0.5 * freestream[0]**2 * 1.4)
+
         foil = (Xsurf[j0:j1], Ysurf[j0:j1], Psurf[j0:j1], Tsurf[j0:j1], Cfsurf[j0:j1])
 
-        return True, field, foil
+        return True, field, foil, freestream
 
     @staticmethod
     def foildata(field_data: np.array, j0: int, j1: int):
