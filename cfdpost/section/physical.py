@@ -46,7 +46,8 @@ class PhysicalSec():
         #                                           # most of the time, A == N
         'Hi':  ['maximum Hi', _i, _X],              # position of maximum Hi
         'Hc':  ['maximum Hc', _i, _X],              # position of maximum Hc
-        
+        '95':  ['95% chord', _i, _X],
+
         'L1U': ['length 1~U', _value],              # XU-X1
         'L13': ['length 1~3', _value],              # X3-X1
         'LSR': ['length S~R', _value],              # XR-XS
@@ -80,41 +81,48 @@ class PhysicalSec():
         self.Re   = Re
         self.xf_dict = copy.deepcopy(PhysicalSec.xf_dict)
 
-    def setdata(self, x, y, Cp, Tw, Hi, Hc, dudy):
-        '''
-        Set the data of this foil or section.
-
-        Data:   ndarray, start from lower surface trailing edge
-        '''
+    def setlimdata(self, x, y, Cp, dudy):
         self.x = copy.deepcopy(x)
         self.y = copy.deepcopy(y)
         self.Cp = copy.deepcopy(Cp)
         self.Mw = self.Cp2Mw()
-        self.Tw = copy.deepcopy(Tw)
-        self.Hi = copy.deepcopy(Hi)
-        self.Hc = copy.deepcopy(Hc)
         self.dudy = copy.deepcopy(dudy)
 
         iLE = np.argmin(self.x)
+        self.iLE = iLE
         self.x -= self.x[iLE]
         self.y -= self.y[iLE]
         self.x[0] = 1.0
         self.x[-1] = 1.0
 
         fmw = interp1d(self.x[iLE:], self.Mw[iLE:], kind='cubic')
-        fhu = interp1d(self.x[iLE:], self.Hc[iLE:], kind='cubic')
-        gu  = interp1d(self.x[iLE:], self.y [iLE:], kind='cubic')
+
         x_  = np.append(self.x[iLE:0:-1], self.x[0])
         y_  = np.append(self.y[iLE:0:-1], self.y[0])
+        gu  = interp1d(self.x[iLE:], self.y [iLE:], kind='cubic')
         gl  = interp1d(x_, y_, kind='cubic')
-
         self.xx = np.arange(0.0, 1.0, 0.001)
         self.yu = gu(self.xx)
         self.yl = gl(self.xx)
         self.mu = fmw(self.xx)
+
+
+    def setdata(self, x, y, Cp, Tw, Hi, Hc, dudy):
+        '''
+        Set the data of this foil or section.
+
+        Data:   ndarray, start from lower surface trailing edge
+        '''
+        self.setlimdata(x, y, Cp, dudy)
+        self.Tw = copy.deepcopy(Tw)
+        self.Hi = copy.deepcopy(Hi)
+        self.Hc = copy.deepcopy(Hc)
+
+        iLE = np.argmin(self.x)
+
+        fhu = interp1d(self.x[iLE:], self.Hc[iLE:], kind='cubic')
         self.hu = fhu(self.xx)
         
-        self.iLE = iLE
 
     def set_Mw(self, x, Mw):
         '''
@@ -452,10 +460,14 @@ class PhysicalSec():
         #* T => trailing edge upper surface (98% chord length)
         for i in range(int(0.2*nn)):
             ii = nn-i-1
+            if X[ii]<=0.95 and X[ii+1]>0.95:
+                self.xf_dict['95'][1] = ii
+                self.xf_dict['95'][2] = 0.95
+                break
+
             if X[ii]<=0.98 and X[ii+1]>0.98:
                 self.xf_dict['T'][1] = ii
                 self.xf_dict['T'][2] = 0.98
-                break
         
         #* H => position of upper surface maximum Mach number
         i_H = 0
