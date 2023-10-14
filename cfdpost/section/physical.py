@@ -5,12 +5,221 @@ import copy
 import os
 
 import numpy as np
+import cfdpost.utils as ut
 from scipy.interpolate import interp1d
 
+from typing import Tuple, List
 
-class PhysicalSec():
+
+DATA_TYPE = ['DIMENTIONAL']
+
+
+class PhysicalLine():
+
+    '''
+    base class for linear data
+
+    xf_dict:  dictionary of flow features
+        the value of each flow features should contain 3 parts:
+        1. full name of the feature
+        2. index of the feature position (int or List[int])
+        3. x position of the feature position (float or List[float])
+        remark that 3 is not the position of 2
+
+    initial para:
+    ===
+    `name`
+    
+    '''
+
+    xf_dict = {}
+
+    def __init__(self, name='new_physical'):
+
+        self.name = name
+        self.xf_dict = copy.deepcopy(self.__class__.xf_dict)
+        # self._basic_var_info = basic_var_info
+
+    def setdata(self, x, y, Cp, Tw, dudy, info={'x': 'DIMENTONAL', 'Cp': 'P', 'dudy':'Tau_x'}, **kwargs):
+        '''
+        Set the data of this foil or section.
+
+        Data:   ndarray, start from lower surface trailing edge
+        '''
+        self.x = copy.deepcopy(x)
+        self.y = copy.deepcopy(y)
+        self.Cp = copy.deepcopy(Cp)
+        self.Tw = copy.deepcopy(Tw)
+        self.dudy = copy.deepcopy(dudy)
+        self.info = info
+
+    @property
+    def n_point(self):
+        '''
+        Number of points in this section
+        '''
+        return self.x.shape[0]
+
+    def _get_i0_i1(self, ii: int) -> Tuple[int, int]:
+        '''
+        return the index of the line interpolating for the other variables
+        for a wall section, all the input data could be used to interpolate, so return none
+        for a surface whose `x` is not increasing, a function should be implenment to 
+        guarantee the data used to interpolate is increasing
+        '''
+        raise NotImplementedError
+
+    def getValue(self, feature: str, key: str) -> float or List[float]:
+        '''
+        Get value of given feature.
+
+        ### Inputs:
+        ```text
+        feature:    key of feature dictionary
+        key:        'i', 'X', 'Cp', 'Mw', 'Tw', 'Hi', 'Hc', 'dudy'
+        ```
+        '''
+
+        if not (feature in self.xf_dict.keys()):
+            print('  Warning: feature [%s] not valid'%(feature))
+            return 0.0
+
+        # find the feature position
+        aa = self.xf_dict[feature]
+
+        if key in ['i']:
+            return aa[1]
+
+        if key in ['X']:
+            return aa[2]
+
+        # print out other varibles at `feature` position
+
+        if not key in self.__dict__:
+            raise KeyError('  Warning: key [%s] not valid'%(key))
+        
+        ii = aa[1]
+        xx = aa[2]
+
+        # single position, aa[1] is int indicating index
+        if not isinstance(ii, list):
+            i0, i1 = self._get_i0_i1(ii)
+            return self.getValueX(xx, key=key, i0=i0, i1=i1)
+        
+        # multiple position, aa[1] is list of int indicating index
+        else:
+            ff = []
+            for iii, xxx in zip(ii, xx):
+                i0, i1 = self._get_i0_i1(iii)
+                ff.append(self.getValueX(xxx, key=key, i0=i0, i1=i1))
+            return ff
+    
+    def getValueX(self, xx: float, key: str, i0: int, i1: int) -> float:
+
+        yy = self.__dict__[key] # the sequence of acquirion data
+
+        X = self.x[i0:i1]
+        Y = yy[i0:i1]
+        f = interp1d(X, Y, kind='cubic', bounds_error=False, fill_value=(Y[0], Y[-1]))
+
+        return float(f(xx))
+
+
+
+class PhysicalSecWall(PhysicalLine):
+    
+    xf_dict = {
+        'mUy': ['min(du/dy)', 0, 0.0],              # position of min(du/dy)
+        'S':  ['separation start', [], []],
+        'R':  ['reattachment', [], []],
+        'T':  ['before separation', [], []]
+        # 'P':  ['pleatue', [], []]
+    }
+
+    def locate_sep(self, **kwargs):
+
+        _mUy, _sepS, _sepR, _sepT = self._locate_sep(**kwargs)
+        for i in range(2):
+            self.xf_dict['mUy'][i+1] = _mUy[i]
+            try:
+                self.xf_dict['S'][i+1] = _sepS[i]
+                self.xf_dict['R'][i+1] = _sepR[i]
+                self.xf_dict['T'][i+1] = _sepT[i]
+            except IndexError:
+                pass
+
+
+    def _locate_sep(self, st: int, ed: int, use_tail: bool = False, x_range: Tuple[float, float] = None):
+        
+        #* S => separation start position
+        #* R => reattachment position
+        #* mUy => position of min(du/dy)
+
+        sep_flag = False
+        is_sep_flag = False     # whether the separation has happen 
+        min_Uy = 1e6
+
+        xx = self.x
+        pp = self.Cp
+        tau_x = self.dudy
+
+        _mUy   = [0, 0.0]
+        _sep_S = [[], []]
+        _sep_T = [[], []]
+        _sep_R = [[], []]
+
+        for ii in range(st, ed - 1):
+
+            if x_range is not None and (xx[ii] < x_range[0] or xx[ii] > x_range[1]):
+                continue
+            
+            #* find the minimal point of dUdy => mUy
+            if tau_x[ii]<min_Uy and tau_x[ii-1]>=tau_x[ii] and tau_x[ii+1]>=tau_x[ii]:
+                min_Uy = tau_x[ii]
+                _mUy[0] = ii
+                _mUy[1] = xx[ii]
+
+            if tau_x[ii]>=0.0 and tau_x[ii+1]<0.0:
+
+                _sep_S[0].append(ii)
+                _sep_S[1].append((0.0-tau_x[ii])*(xx[ii+1]-xx[ii])/(tau_x[ii+1]-tau_x[ii])+xx[ii])
+                sep_flag = True
+                is_sep_flag = True
+
+                # find the pressure before separation
+                jj = ii + 1
+                while pp[jj] > pp[jj-1]:
+                    jj -= 1
+                _sep_T[0].append(jj)
+                _sep_T[1].append(xx[jj])
+
+            if tau_x[ii]<=0.0 and tau_x[ii+1]>0.0:
+                _sep_R[0].append(ii)
+                _sep_R[1].append((0.0-tau_x[ii])*(xx[ii+1]-xx[ii])/(tau_x[ii+1]-tau_x[ii])+xx[ii])
+                sep_flag = False
+
+
+        if use_tail and sep_flag:
+            _sep_R[0].append(self.n_point-1)
+            _sep_R[1].append(xx[-1])
+
+        if use_tail and (not is_sep_flag):
+            _sep_S[0].append(self.n_point-1)
+            _sep_R[0].append(self.n_point-1)
+            _sep_S[1].append(xx[-1])
+            _sep_R[1].append(xx[-1])
+
+        return _mUy, _sep_S, _sep_R, _sep_T
+
+
+class PhysicalSec(PhysicalSecWall):
     '''
     Extracting flow features of a section (features on/near the wall)
+
+    Remark (Yang)
+    ---
+    static method are used to process field data, while class objuct only accept
+    data distribution on the surface
     '''
     _i  = 0     # index of the mesh point
     _X  = 0.0   # location of the feature location
@@ -67,7 +276,7 @@ class PhysicalSec():
         'kaf': ['slope aft', _value]                # average Mw slope of the aft upper surface (3/N~T)
     }
 
-    def __init__(self, Minf, AoA, Re):
+    def __init__(self, Minf, AoA, Re, Tinf = 460, gamma = 1.40):
         '''
         ### Inputs:
         ```text
@@ -76,10 +285,14 @@ class PhysicalSec():
         Re:         Reynolds number per meter
         ```
         '''
-        self.Minf = Minf
-        self.AoA  = AoA
-        self.Re   = Re
-        self.xf_dict = copy.deepcopy(PhysicalSec.xf_dict)
+        
+        super().__init__()
+        self.paras = {'Qratio': 0.2,
+                      'Minf':   Minf,
+                      'AoA':    AoA,
+                      'Re':     Re,
+                      'Tinf':   Tinf,
+                      'gamma':  gamma}    # the ratio of chord to find suction peak near leading edge on lower surface
 
     def setlimdata(self, x, y, Cp, dudy):
         self.x = copy.deepcopy(x)
@@ -140,13 +353,6 @@ class PhysicalSec():
         self.xx = np.arange(0.0, 1.0, 0.001)
         self.mu = fmw(self.xx)
 
-    @property
-    def n_point(self):
-        '''
-        Number of points in this section
-        '''
-        return self.x.shape[0]
-
     @staticmethod
     def IsentropicCp(Ma, Minf: float, g=1.4):
         ''' 
@@ -181,7 +387,7 @@ class PhysicalSec():
         '''
         Converting Cp to wall Mach number
         '''
-        Mw = PhysicalSec.toMw(self.Cp, self.Minf, n_ref=n_ref, M_max=M_max)
+        Mw = PhysicalSec.toMw(self.Cp, self.paras['Minf'], n_ref=n_ref, M_max=M_max)
 
         return Mw
 
@@ -318,7 +524,7 @@ class PhysicalSec():
             iUe[j]  = np.argmax(np.abs(VtS[j,:]))
             dudy[j] = VtS[j,1]/sS[j,1]
             Tw[j]   = T[jj,0]
-
+        
         #* Smooth iUe at shock wave foot
         nspan = 4
         for j in range(nn-2*nspan):
@@ -359,66 +565,113 @@ class PhysicalSec():
 
         return Hi, Hc, (Tw, dudy)
 
-    def getValue(self, feature: str, key='key') -> float:
+    
+    def get_force_moment(self, X, Y, U, V, T, P, j0: int, j1: int, x_mc = 0.25, y_mc = 0.0):
+        _paras = copy.deepcopy(self.paras)
+        _paras['x_mc'] = x_mc
+        _paras['y_mc'] = y_mc
+        return PhysicalSec.get_force(X, Y, U, V, T, P, j0, j1, _paras)
+
+    @staticmethod
+    def get_force(X, Y, U, V, T, P, j0: int, j1: int, paras, ptype='Cp'):
         '''
-        Get value of given feature.
+        Calculate cl and cd from field data
 
         ### Inputs:
         ```text
-        feature:    key of feature dictionary
-        key:        'i', 'X', 'Cp', 'Mw', 'Tw', 'Hi', 'Hc', 'dudy'
+        Field data: X, Y, U, V, T, P
+            - in ndarray (nj,nk) type
+            - data should be at nodes, rather than at cell center (cfl3d -> .prt are nodes value)
+        j0:     j index of the lower surface TE node
+        j1:     j index of the upper surface TE node
+        paras:  'gamma'    : self.gamma,
+                'Minf'     : self.Minf,
+                'Re'       : self.Re,
+                'Tinf'     : self.Tinf,
+                'AoA'      : self.AoA
         ```
+
+        ### Return:
+        ```text
+        cx, cy: force coefficient of x,y dir
+        cl, cd: lift coef. and drag coef.
+        ```
+
+        ### Note:
+
+        ### Filed data (j,k) index
+        ```text
+        j: 1  - nj  from far field of lower surface TE to far field of upper surface TE
+        j: j0 - j1  from lower surface TE to upper surface TE
+        k: 1  - nk  from surface to far field (assuming pertenticular to the wall)
         '''
 
-        if not feature in PhysicalSec.xf_dict.keys():
-            print('  Warning: feature [%s] not valid'%(feature))
-            return 0.0
+        cx = 0.0
+        cy = 0.0
+        cmz = 0.0
+        # print(self.Minf, self.Re, self.Tinf)
 
-        aa = self.xf_dict[feature]
+        for j in range(j0, j1-1):
+            
+            point1 = np.array([X[j, 0], Y[j, 0]])        # coordinate of surface point j
+            point2 = np.array([X[j, 1], Y[j, 1]]) 
+            point3 = np.array([X[j + 1, 0], Y[j + 1, 0]])
+            point4 = np.array([X[j + 1, 1], Y[j + 1, 1]])
+            
+            p_cen = 0.25 * (P[j, 0] + P[j, 1] + P[j+1, 0] + P[j+1, 1])
+            t_cen = 0.25 * (T[j, 0] + T[j, 1] + T[j+1, 0] + T[j+1, 1])
+            ### u,v on wall kepp origin
+            # u_cen = 0.25 * (U[j, 0] + U[j, 1] + U[j+1, 0] + U[j+1, 1])
+            # v_cen = 0.25 * (V[j, 0] + V[j, 1] + V[j+1, 0] + V[j+1, 1])
+            ### u,v on wall set to 0
+            u_cen = 0.5 * (U[j, 1] + U[j+1, 1])
+            v_cen = 0.5 * (V[j, 1] + V[j+1, 1])
+            
+            vec_sl = point3 - point1                    # surface vector sl
+            veclen = np.linalg.norm(vec_sl)   # length of surface vector sl
+            vec_sl = vec_sl / veclen
+            area = 0.5 * np.linalg.norm(np.cross(point4 - point1, point3 - point2))
+            
+            metrix_nt2xy = np.array([[vec_sl[0], vec_sl[1]],[-vec_sl[1], vec_sl[0]]])
 
-        if len(aa)==2:
-            return aa[1]
+            # pressure part, normal to wall(sl)
+            ### P
+            if ptype == 'P':
+                dfp_n = 1.43 / (paras['gamma'] * paras['Minf']**2) * (paras['gamma'] * p_cen - 1) * veclen
+            else:
+                dfp_n = p_cen * veclen
 
-        if key == 'i':
-            return aa[1]
-        if key == 'X':
-            return aa[2]
-        if key == 'Cp':
-            yy = self.Cp
-        elif key == 'Mw':
-            yy = self.Mw
-        elif key == 'Tw':
-            yy = self.Tw
-        elif key == 'Hi':
-            yy = self.Hi
-        elif key == 'Hc':
-            yy = self.Hc
-        elif key == 'dudy':
-            yy = self.dudy
-        else:
-            raise Exception('  key %s not valid'%(key))
+            # viscous part, tang to wall(sl)
+            mu = t_cen**1.5 * (1 + 198.6 / paras['Tinf']) / (t_cen + 198.6 / paras['Tinf'])
+            dfv_t = 0.063 / (paras['Minf'] * paras['Re']) * mu * np.dot(np.array([u_cen, v_cen]), vec_sl) * veclen**2 / area
 
-        ii = aa[1]
-        xx = aa[2]
+            # print(mu, t_cen, p_cen, np.array([u_cen,v_cen]))
+            dfp = np.dot(np.array([dfv_t, -dfp_n]), metrix_nt2xy)
 
-        if xx <= 1e-6:
-            return 0.0
+            cx += dfp[0]
+            cy += dfp[1]
 
+            sl_cen = 0.5 * (point1 + point3)
+            cmz += dfp[1] * (sl_cen[0] - paras['x_mc']) - dfp[0] * (sl_cen[1] - paras['y_mc'])
+
+
+        metrix_xy2ab = np.array([[ut.cos(paras['AoA']), -ut.sin(paras['AoA'])],[ut.sin(paras['AoA']), ut.cos(paras['AoA'])]])
+
+        fld = np.dot(np.array([cx, cy]), metrix_xy2ab)
+
+        return cx, cy, fld[1], fld[0], cmz
+
+    def _get_i0_i1(self, ii):
         if ii >= self.iLE:
             i0 = max(self.iLE, ii-4)
-            i1 = i0 + 7
+            i1 = min(i0 + 7, len(self.x))
         else:
             i1 = min(self.iLE, ii+4)
-            i0 = i1 - 7
+            i0 = max(i1 - 7, 0)
 
-        X = self.x[i0:i1]
-        Y = yy[i0:i1]
+        return i0, i1 
 
-        f = interp1d(X, Y, kind='cubic')
-
-        return f(xx) 
-
-    #TODO: locate the position of flow features
+    #!: locate the position of flow features
     def locate_basic(self, dMwcri_L=1.0):
         '''
         Locate the index and position of basic flow features.
@@ -431,7 +684,7 @@ class PhysicalSec():
         nn  = X.shape[0]
         iLE = self.iLE
 
-        #TODO: Basic features
+        #!: Basic features
         #* L => suction peak near leading edge on upper surface
         # 1: maximum extreme point
         # 2: dMw/dx = 1
@@ -481,7 +734,7 @@ class PhysicalSec():
         self.xf_dict['H'][2] = X[i_H]
 
         #* Q => suction peak near leading edge on lower surface
-        for i in range(int(0.2*nn)):
+        for i in range(int(self.paras['Qratio']*0.5*nn)):
             ii = iLE - i
             if M[ii-1]<=M[ii] and M[ii]>=M[ii+1]:
                 self.xf_dict['Q'][1] = ii
@@ -505,37 +758,16 @@ class PhysicalSec():
 
         ### Get value of: S, R, mUy
         '''
-        X = self.x
-        dudy = self.dudy
-
-        nn  = X.shape[0]
-        iLE = self.iLE
-
-        #* S => separation start position
-        #* R => reattachment position
-        #* mUy => position of min(du/dy)
-        min_Uy = 1e6
-        i_S = 0
-        for i in range(int(0.5*nn)):
-            ii = iLE + i
-            if X[ii]<0.02:
-                continue
-            if X[ii]>0.98:
-                break
-
-            if dudy[ii]>=0.0 and dudy[ii+1]<0.0 and i_S==0:
-                i_S = ii
-                self.xf_dict['S'][1] = ii
-                self.xf_dict['S'][2] = (0.0-dudy[ii])*(X[ii+1]-X[ii])/(dudy[ii+1]-dudy[ii])+X[ii]
-
-            if dudy[ii]<=0.0 and dudy[ii+1]>0.0 and i_S!=0:
-                self.xf_dict['R'][1] = ii
-                self.xf_dict['R'][2] = (0.0-dudy[ii])*(X[ii+1]-X[ii])/(dudy[ii+1]-dudy[ii])+X[ii]
-        
-            if dudy[ii]<min_Uy and dudy[ii-1]>=dudy[ii] and dudy[ii+1]>=dudy[ii]:
-                min_Uy = dudy[ii]
-                self.xf_dict['mUy'][1] = ii
-                self.xf_dict['mUy'][2] = X[ii]
+        # super().locate_sep(self.iLE, self.x.shape[0], x_range=(0.0, 1.0))
+        _mUy, _sepS, _sepR, _sepT = self._locate_sep(self.iLE, self.x.shape[0], x_range=(0.0, 1.0))
+        for i in range(2):
+            self.xf_dict['mUy'][i+1] = _mUy[i][0]
+            try:
+                self.xf_dict['S'][i+1] = _sepS[i][0]
+                self.xf_dict['R'][i+1] = _sepR[i][0]
+                self.xf_dict['T'][i+1] = _sepT[i][0]
+            except IndexError:
+                pass
 
     def locate_geo(self):
         '''
@@ -565,7 +797,7 @@ class PhysicalSec():
         self.xf_dict['tl'][2] = x_ml
 
         #* Cu => crest point on upper surface
-        aa = self.AoA/180.0*np.pi
+        aa = self.paras['AoA']/180.0*np.pi
         x0 = np.array([0.0, 0.0])
         x1 = np.array([np.cos(aa), np.sin(aa)])
 
@@ -615,7 +847,7 @@ class PhysicalSec():
                 continue
             if xx[i]>=0.98:
                 continue
-            dMw[i] = (mu[i+1]-mu[i])/(xx[i+1]-xx[i])
+            dMw[i] = (mu[i + 1] - mu[i]) / (xx[i + 1] - xx[i])
             dMw[i] = min(dMw[i], 2)
 
         d2Mw = np.zeros(nn)
@@ -633,6 +865,9 @@ class PhysicalSec():
 
         self.xf_dict['lSW'][1] = flag
         if not flag==1:
+            f = open('error.txt', 'w', encoding='utf-8')
+            f.write('Not single shock detected!')
+            f.close()
             return 0
 
         #* F => shock foot position
@@ -646,7 +881,6 @@ class PhysicalSec():
         #* 3 => position of just downstream the shock
         self.xf_dict['3'][1] = np.argmin(np.abs(X[iLE:]-xx[i_3])) + iLE
         self.xf_dict['3'][2] = xx[i_3]
-
         #* U => local sonic position
         self.xf_dict['U'][1] = np.argmin(np.abs(X[iLE:]-xx[i_U])) + iLE
         self.xf_dict['U'][2] = xx[i_U]
@@ -955,8 +1189,8 @@ class PhysicalSec():
         self.xf_dict['LSR'][1] = self.xf_dict['R'][2] - self.xf_dict['S'][2]
         self.xf_dict['DCp'][1] = self.getValue('3','Cp') - self.getValue('1','Cp')
 
-        cosA = np.cos(self.AoA/180.0*np.pi)
-        sinA = np.sin(self.AoA/180.0*np.pi)
+        cosA = np.cos(self.paras['AoA']/180.0*np.pi)
+        sinA = np.sin(self.paras['AoA']/180.0*np.pi)
         #* Err => Cp integral of suction plateau fluctuation
         #* DMp => Mw dent on suction plateau
         #* FSp => Mw fluctuation of suction plateau
@@ -1064,16 +1298,16 @@ class PhysicalSec():
 
     def extract_features(self, info=False):
         '''
-        Extract flow features list in the dictionart.
+        Extract flow features list in the dictionary.
         '''
         self.locate_basic()
-        self.locate_sep()
+        # self.locate_sep()
         self.locate_geo()
         i_1 = self.locate_shock(info=info)
         self.locate_BL(i_1)
         self.aux_features()
 
-    #TODO: output features
+    #!: output features
     def output_features(self, fname="feature2d.txt", append=True, keys_=None):
         '''
         Output all features to file.
@@ -1323,7 +1557,7 @@ def ratio_vec(x0, x1, x):
     v  = (x1-x0)/l0
     l2 = np.dot(v, x-x0)
     t  = l2/l1
-    s  = np.sqrt(l1**2 - l2**2 + 1E-9)
+    s  = np.sqrt(l1**2 - l2**2)
 
     return s, t
 

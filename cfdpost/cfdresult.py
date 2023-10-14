@@ -2,6 +2,8 @@
 Post process of CFD results
 '''
 import copy
+axis_2_idx = {'x': 3, 'y': 4, 'z': 5}
+
 import os
 import platform
 
@@ -357,7 +359,7 @@ class cfl3d():
         return block_p, block_v
 
     @staticmethod
-    def readprt_foil(path: str, j0: int, j1: int, fname='cfl3d.prt', coordinate='xy'):
+    def readprt_foil(path: str, j0: int, j1: int, fname='cfl3d.prt', coordinate='xy', coordinate='xy'):
         '''
         Read and extract foil Cp from cfl3d.prt
 
@@ -435,19 +437,23 @@ class cfl3d():
                     Cp = np.zeros([nj, nk])
                     vi = np.zeros([nj, nk])
 
-                    for k in range(nk):
-                        for j in range(nj):
-                            L1 = f0.readline().split()
+            x_idx = axis_2_idx[coordinate[0]]
+            y_idx = axis_2_idx[coordinate[1]]
 
-                            X [j,k] = float(L1[x_idx])
-                            Y [j,k] = float(L1[y_idx])
-                            U [j,k] = float(L1[6])
-                            V [j,k] = float(L1[7])
-                            P [j,k] = float(L1[9])
-                            T [j,k] = float(L1[10])
-                            Ma[j,k] = float(L1[11])
-                            Cp[j,k] = float(L1[12])
-                            vi[j,k] = float(L1[13])
+            for k in range(nk):
+                for j in range(nj):
+                    L1 = f0.readline()
+                    L1 = L1.split()
+
+                    X [j,k] = float(L1[x_idx])
+                    Y [j,k] = float(L1[y_idx])
+                    U [j,k] = float(L1[6])
+                    V [j,k] = float(L1[7])
+                    P [j,k] = float(L1[9])
+                    T [j,k] = float(L1[10])
+                    Ma[j,k] = float(L1[11])
+                    Cp[j,k] = float(L1[12])
+                    vi[j,k] = float(L1[13])
 
                 elif counter == 1:
                     counter += 1
