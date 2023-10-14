@@ -8,6 +8,7 @@ import platform
 import numpy as np
 import struct as st
 
+from typing import Tuple, List
 
 class cfl3d():
     '''
@@ -96,7 +97,7 @@ class cfl3d():
         if k < n*0.5:
             converge = False
 
-        elif np.max(CLs)-np.min(CLs) < max(0.01, 0.01*CL_):
+        elif np.max(CLs)-np.min(CLs) < max(0.1, 0.1*CL_):   # 0.01
             CL = CL_
             CD = np.mean(CDs)
             Cm = np.mean(Cms)
@@ -201,6 +202,7 @@ class cfl3d():
             inp = path+'/cfl3d.inp'
 
         if not os.path.exists(inp):
+            print(inp)
             return False, Minf, AoA0, Re, l2D
 
         with open(inp, 'r') as f:
@@ -223,9 +225,9 @@ class cfl3d():
         return succeed, Minf, AoA0, Re, l2D
 
     @staticmethod
-    def readprt(path: str, fname='cfl3d.prt'):
+    def readprt(path: str, fname: str = 'cfl3d.prt', write_to_file: bool = False) -> Tuple[List[np.ndarray], List[np.ndarray]]:
         '''
-        Read cfl3d.prt of the CFL3D output.
+        Read cfl3d.prt of the CFL3D output. (python version of the original Fortran file)
 
         >>> succeed = readprt(path: str, fname='cfl3d.prt')
 
@@ -236,12 +238,81 @@ class cfl3d():
 
         ### Return:
         ```text
-        succeed (bool)
+        (block_p, block_v)
+            each contains several blocks, each block is a np.ndarray of size (Nx * Ny * Nz * Nv)
         ```
         '''
         mi = 10000000   # maximum size of i*j*k
-        ijk = np.zeros([mi,3],  dtype=int)
-        xyz = np.zeros([mi,11], dtype=float)
+
+        def read_block(fin):
+
+            xyz = []
+            # read pressure fields
+            ijk_i = np.zeros((3,), dtype=int)
+            ijkmax = np.zeros((3,), dtype=int)
+            ijkmin = np.ones((3,), dtype=int) * mi
+            while True:
+                new_line_split = fin.readline().split()
+                if len(new_line_split) == 0 or new_line_split[0] in ['I']:
+                    # end of the first part
+                    break
+                # read the line 
+                for i in range(3):
+                    ijk_i[i] = int(new_line_split[i])
+                
+                xyz_i = []
+                for i in range(11):
+                    #  X, Y, Z, U/Uinf, V/Vinf, W/Winf, P/Pinf, T/Tinf, MACH, cp, tur. vis. （11）
+                    #           ^       ^       ^                       ^  this four should be zero!
+                    # the value at cell center!
+                    xyz_i.append(float(new_line_split[i + 3]))
+                xyz.append(xyz_i)
+                
+                # update the block size (the size is not written in the file)
+                ijkmax = np.maximum(ijkmax, ijk_i)
+                ijkmin = np.minimum(ijkmin, ijk_i)
+            
+            block_shape = (ijkmax - ijkmin + 1).tolist()
+            xyz_p = np.array(xyz).reshape(block_shape + [-1])
+
+            # read viscous fields (the data may not be full)
+            xyz_v = np.zeros(block_shape + [12])
+            while True:
+                aline = fin.readline()
+                if aline == '': break   # End of file
+
+                new_line_split = aline.split()
+                if len(new_line_split) == 0: continue   # null line
+                if new_line_split[0] in ['BLOCK']: break # go into next block
+
+                if new_line_split[0] in ['I'] and new_line_split[6] in 'dn':
+                    while True:
+                        new_line_split = fin.readline().split()
+                        if len(new_line_split) == 0:
+                            break
+                        for i in range(3):
+                            ijk_i[i] = int(new_line_split[i])
+                        ijk_i = ijk_i - ijkmin
+                        for i in range(12):
+                            #  X, Y, Z, dn, P/Pinf, T/Tinf, Cf, Ch, yplus, Cfx, Cfy, Cfz （12）
+                            # the value at cell center!
+                            xyz_v[tuple(ijk_i)][i] = float(new_line_split[i + 3])
+
+            return xyz_p, xyz_v
+
+        def write_block(block, fout, num_v, block_name):
+            bs = block.shape
+            print(bs)
+            if bs[0] == 1: fout.write('zone T="%s" i= %d j= %d k= %d \n'%(block_name, bs[0], bs[1], bs[2]))
+            if bs[1] == 1: fout.write('zone T="%s" i= %d j= %d k= %d \n'%(block_name, bs[2], bs[1], bs[0]))
+            if bs[2] == 1: fout.write('zone T="%s" i= %d j= %d k= %d \n'%(block_name, bs[1], bs[0], bs[2]))
+            for _i, _j, _k in np.ndindex(bs[:3]):
+                out_line = '%18.10f %18.10f %18.10f' % (block[_i, _j, _k, 0], block[_i, _j, _k, 1], block[_i, _j, _k, 2])
+                out_line += ' %5d %5d %5d'%(_i, _j, _k)
+                for _v in range(num_v):
+                    out_line += ' %18.10f'%(block[_i, _j, _k, 3 + _v])
+                
+                fout.write(out_line + '\n')
 
         if platform.system() in 'Windows':
             prt  = path+'\\'+fname
@@ -253,139 +324,37 @@ class cfl3d():
             out2 = path+'/surface2.dat'
 
         if not os.path.exists(prt):
-            return False
+            raise IOError('File %s not exist!' % prt)
+        
+        block_p = []        # pressure distributions for blocks
+        block_v = []        # viscous distributions for blocs
 
-        f0 = open(prt, 'r')
-        f1 = None
-        f2 = None
+        with open(prt, 'r') as f0:
 
-        block_p = 0
-        block_v = 0
-        while True:
+            while True:
 
-            line = f0.readline()
-            if line == '':
-                break
+                line = f0.readline()
+                if line == '':  break
 
-            line = line.split()
-            if len(line) == 0:
-                continue
-            if not line[0] in 'I':
-                continue
-
-            if line[6] in 'U/Uinf':
-                #* Pressure distribution
-                imax = 0
-                jmax = 0
-                kmax = 0
-                imin = mi
-                jmin = mi
-                kmin = mi
-                i0 = 0
-                while True:
-                    L1 = f0.readline()
-                    L1 = L1.split()
-                    if len(L1) == 0:
-                        break
-                    if L1[0] in 'I':
-                        break
-                    for i in range(3):
-                        ijk[i0, i] = int(L1[i])
-                    for i in range(11):
-                        xyz[i0, i] = float(L1[i+3])
-                    
-                    imax = max(imax, ijk[i0,0])
-                    jmax = max(jmax, ijk[i0,1])
-                    kmax = max(kmax, ijk[i0,2])
-                    imin = min(imin, ijk[i0,0])
-                    jmin = min(jmin, ijk[i0,1])
-                    kmin = min(kmin, ijk[i0,2])
-                    i0 += 1
+                line = line.split()
+                if len(line) == 0: continue
+                if not line[0] in 'I': continue
                 
-                nn = (imax-imin+1)*(jmax-jmin+1)*(kmax-kmin+1)
-                if i0 == nn:
+                if line[6] in 'U/Uinf':
+                    #* Pressure distribution (first part of the .prt file)
+                    block = read_block(fin=f0)
+                    block_p.append(block[0])
+                    block_v.append(block[1])
+        
+        if write_to_file:
+            with open(out1, 'w') as f1, open(out2, 'w') as f2:
+                f1.write('Variables = X Y Z I J K U V W P T M Cp ut \n')
+                f2.write('Variables = X Y Z I J K dn P T Cf Ch yplus Cfx Cfy Cfz\n')
+                for idx in range(len(block_p)):
+                    write_block(block=block_p[idx], fout=f1, num_v=8, block_name=str(idx))
+                    write_block(block=block_v[idx], fout=f2, num_v=9, block_name=str(idx))
 
-                    if block_p==0:
-                        f1 = open(out1, 'w')
-                        f1.write('Variables = X Y Z I J K U V W P T M Cp ut \n')
-
-                    block_p += 1
-                    print('  Read pressure block %d'%(block_p))
-
-                    if imax==imin:
-                        f1.write('zone T="%d" i= %d j= %d k= %d \n'%(block_p, imax-imin+1, jmax-jmin+1, kmax-kmin+1))
-                    elif jmax==jmin:
-                        f1.write('zone T="%d" i= %d j= %d k= %d \n'%(block_p, kmax-kmin+1, jmax-jmin+1, imax-imin+1))
-                    else:
-                        f1.write('zone T="%d" i= %d j= %d k= %d \n'%(block_p, jmax-jmin+1, imax-imin+1, kmax-kmin+1))
-                    for i in range(nn):
-                        L2 = '%18.10f %18.10f %18.10f'%(xyz[i,0], xyz[i,1], xyz[i,2])
-                        L2 = L2 + ' %5d %5d %5d'%(ijk[i,0], ijk[i,1], ijk[i,2])
-                        for j in range(8):
-                            L2 = L2 + ' %18.10f'%(xyz[i,3+j])
-                        f1.write(L2+'\n')
-
-            if line[6] in 'dn':
-                #* Viscous distribution
-
-                imax = 0
-                jmax = 0
-                kmax = 0
-                imin = mi
-                jmin = mi
-                kmin = mi
-                i0 = 0
-                while True:
-                    L1 = f0.readline()
-                    L1 = L1.split()
-                    if len(L1) == 0:
-                        break
-                    if L1[0] in 'I':
-                        break
-
-                    for i in range(3):
-                        ijk[i0, i] = int(L1[i])
-                    for i in range(9):
-                        xyz[i0, i] = float(L1[i+3])
-                    
-                    imax = max(imax, ijk[i0,0])
-                    jmax = max(jmax, ijk[i0,1])
-                    kmax = max(kmax, ijk[i0,2])
-                    imin = min(imin, ijk[i0,0])
-                    jmin = min(jmin, ijk[i0,1])
-                    kmin = min(kmin, ijk[i0,2])
-                    i0 += 1
-                
-                nn = (imax-imin+1)*(jmax-jmin+1)*(kmax-kmin+1)
-                if i0 == nn:
-
-                    if block_v==0:
-                        f2 = open(out2, 'w')
-                        f2.write('Variables = X Y Z I J K dn P T Cf Ch yplus \n')
-
-                    if imax==imin:
-                        f2.write('zone i= %d j= %d k= %d \n'%(imax-imin+1, jmax-jmin+1, kmax-kmin+1))
-                    elif jmax==jmin:
-                        f2.write('zone i= %d j= %d k= %d \n'%(kmax-kmin+1, jmax-jmin+1, imax-imin+1))
-                    else:
-                        f2.write('zone i= %d j= %d k= %d \n'%(jmax-jmin+1, imax-imin+1, kmax-kmin+1))
-                    for i in range(nn):
-                        L2 = '%18.10f %18.10f %18.10f'%(xyz[i,0], xyz[i,1], xyz[i,2])
-                        L2 = L2 + ' %5d %5d %5d'%(ijk[i,0], ijk[i,1], ijk[i,2])
-                        for j in range(6):
-                            L2 = L2 + ' %18.10f'%(xyz[i,3+j])
-                        f2.write(L2+'\n')
-
-                    block_v += 1
-                    print('  Read viscous block %d'%(block_v))
-
-        f0.close()
-        if f1 is not None:
-            f1.close()
-        if f2 is not None:
-            f2.close()
-
-        return True
+        return block_p, block_v
 
     @staticmethod
     def readprt_foil(path: str, j0: int, j1: int, fname='cfl3d.prt', coordinate='xy'):
@@ -434,7 +403,6 @@ class cfl3d():
         # read freestream data
         for _ in range(4): line = f0.readline()
         freestream = [float(i) for i in line.split()]
-        print(freestream)
 
         counter = 0
         while True:
@@ -883,7 +851,7 @@ class cfl3d():
         return xyz, qq, mach, alfa, reyn
 
     @staticmethod
-    def analysePlot3d(Mr: float, qq, iVar:list, gamma_r=1.4):
+    def analysePlot3d(Mr: float, qq: np.ndarray, iVar: list, gamma_r=1.4):
         '''
         Calculate fluid variables from plot3d.
 
