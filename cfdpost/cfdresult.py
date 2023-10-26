@@ -49,13 +49,8 @@ class cfl3d():
         CDf = 0.0
         errs = [0.0 for _ in range(5)]
 
-        if platform.system() in 'Windows':
-            out1 = path+'\\clcd.dat'
-            out2 = path+'\\clcd_wall.dat'
-
-        else:
-            out1 = path+'/clcd.dat'
-            out2 = path+'/clcd_wall.dat'
+        out1 = os.path.join(path, 'clcd.dat')
+        out2 = os.path.join(path, 'clcd_wall.dat')
 
         if os.path.exists(out1):
             out = out1
@@ -99,7 +94,7 @@ class cfl3d():
         if k < n*0.5:
             converge = False
 
-        elif np.max(CLs)-np.min(CLs) < max(0.1, 0.1*CL_):   # 0.01
+        elif np.max(CLs)-np.min(CLs) < max(0.01, 0.01*CL_):
             CL = CL_
             CD = np.mean(CDs)
             Cm = np.mean(Cms)
@@ -118,6 +113,90 @@ class cfl3d():
             return converge, CL, CD, Cm, CDp, CDf, errs
         else:
             return converge, CL, CD, Cm, CDp, CDf
+
+    @staticmethod
+    def readCoef1(path: str, n: int = 100, output_error: bool = False, conv_hold: float = 0.01):
+        '''
+        Read clcd_wall.dat or clcd.dat of the CFL3D outputs.
+
+        >>> converge, CL, CD, Cm, CDp, CDf = readCoef(path: str, n=100, output_error=False)
+        >>> converge, CL, CD, Cm, CDp, CDf, errs = readCoef(path: str, n=100, output_error=True)
+
+        ### Inputs:
+        ```text
+        path:   folder that contains the results
+        n:      get the mean value of final n steps
+        ```
+
+        ### Return:
+        ```text
+        converge (bool), steps,
+        vals = [CL, CD, Cm(z), CDp, CDf]
+        errs = [err_CL, err_CD, err_Cm, err_CDp, err_CDf]
+        ```
+        '''
+        converge = 0
+        steps = 0
+        vals = np.zeros(5)
+        errs = np.zeros(5)
+
+        out1 = os.path.join(path, 'clcd.dat')
+        out2 = os.path.join(path, 'clcd_wall.dat')
+
+        if os.path.exists(out1):
+            out = out1
+        elif os.path.exists(out2): 
+            out = out2
+        else:
+            if output_error:
+                return -1, 0, vals, errs
+            else:
+                return -1, 0, vals
+
+        CLs = np.zeros((5, n))
+
+        with open(out, 'r') as f:
+            lines = f.readlines()
+            n_all = len(lines)
+            if n_all < 4:
+                if output_error:
+                    return -1, 0, vals, errs
+                else:
+                    return -1, 0, vals
+
+        steps = int(lines[-1].split()[2])
+        i = 1
+        k = 0
+        while i<n_all-4 and k<n:
+
+            L1 = lines[-i].split()
+            L2 = lines[-i-1].split()
+            i += 1
+
+            if L1[2] == L2[2]:
+                # Duplicated lines of the final step when using multiple blocks
+                continue
+
+            CLs[0, k] = float(L1[5])
+            CLs[1, k] = float(L1[6])
+            CLs[2, k] = float(L1[12])
+            CLs[3, k] = float(L1[8])
+            CLs[4, k] = float(L1[9])
+            k += 1
+
+        vals = np.mean(CLs, axis=1)
+
+        if k < n*0.5:
+            converge = -2
+        elif np.max(CLs[0])-np.min(CLs[0]) < max(conv_hold, conv_hold * vals[0]):
+            errs = np.max(CLs, axis=1)-np.min(CLs, axis=1)
+        else:
+            converge = 1
+        
+        if output_error:
+            return converge, steps, vals, errs
+        else:
+            return converge, steps, vals
 
     @staticmethod
     def readAoA(path: str, n=100, output_error=False):
