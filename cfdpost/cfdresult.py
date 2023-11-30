@@ -188,10 +188,11 @@ class cfl3d():
 
         if k < n*0.5:
             converge = -2
-        elif np.max(CLs[0])-np.min(CLs[0]) < max(conv_hold, conv_hold * vals[0]):
-            errs = np.max(CLs, axis=1)-np.min(CLs, axis=1)
         else:
-            converge = 1
+            errs = np.max(CLs, axis=1)-np.min(CLs, axis=1)
+
+            if errs[0] > max(conv_hold, conv_hold * vals[0]):
+                converge = 1
         
         if output_error:
             return converge, steps, vals, errs
@@ -1089,6 +1090,90 @@ class cfl3d():
             var = np.transpose(var, axes=(1,2,3,0))
 
         return var
+
+    @staticmethod
+    def readsurf2d(path: str, fname_grid='surf.g', fname_sol='surf.q', fname_nam='surf.nam', binary=True, _double_precision=False):
+
+        if _double_precision:
+            r_format = 8
+            s_format = 'd'
+        else:
+            r_format = 4
+            s_format = 'f'
+        
+        xy = []
+        qq = []
+        var_list = []
+
+        # if fname_nam is not None:
+        #     with open(os.path.join(path, fname_nam), 'r') as f:
+        #         lines = f.readlines()
+        #     nv = len(lines)
+        #     for line in lines:
+        #         var_list.append(line.split()[0])
+        # else:
+        #     nv = 14
+
+        if binary:
+
+            with open(os.path.join(path, fname_grid), 'rb') as f:
+
+                _,num_block,_, = st.unpack('iii', f.read(12))
+
+                _, = st.unpack('i', f.read(4))
+                ni = np.zeros(num_block, dtype=np.int32)
+                nj = np.zeros(num_block, dtype=np.int32)
+                nk = np.zeros(num_block, dtype=np.int32)
+
+                for n in range(num_block):
+                    ni[n],nj[n],nk[n], = st.unpack('iii', f.read(12))
+                    # print(ni[n], nj[n], nk[n])
+                _, = st.unpack('i', f.read(4))
+
+                _, = st.unpack('i', f.read(4))
+                for n in range(num_block):
+                    temp  = np.zeros((ni[n],nj[n],nk[n],3))
+                    # print(temp.shape)
+                    for v in range(3):
+                        for k in range(nk[n]):
+                            for j in range(nj[n]):
+                                for i in range(ni[n]):
+                                    temp[i,j,k,v], = st.unpack(s_format, f.read(r_format))
+
+                    xy.append(copy.deepcopy(temp))
+
+            with open(os.path.join(path, fname_sol), 'rb') as f:
+                
+                _,num_block,_, = st.unpack('iii', f.read(12))
+
+                ni = np.zeros(num_block, dtype=np.int32)
+                nj = np.zeros(num_block, dtype=np.int32)
+                nk = np.zeros(num_block, dtype=np.int32)
+                nv = np.zeros(num_block, dtype=np.int32)
+
+                _, = st.unpack('i', f.read(4))
+                for n in range(num_block):
+                    ni[n],nj[n],nk[n],nv[n], = st.unpack('iiii', f.read(16))
+                _, = st.unpack('i', f.read(4))
+
+                _, = st.unpack('i', f.read(4))
+                for n in range(num_block):
+                    temp = np.zeros((ni[n],nj[n],nk[n],nv[n]))
+
+                    # mach, = st.unpack(s_format, f.read(r_format))   # freestream Mach number
+                    # alfa, = st.unpack(s_format, f.read(r_format))   # freestream angle-of-attack
+                    # reyn, = st.unpack(s_format, f.read(r_format))   # freestream Reynolds number
+                    # time, = st.unpack(s_format, f.read(r_format))   # time
+
+                    for d in range(nv[n]):
+                        for k in range(nk[n]):
+                            for j in range(nj[n]):
+                                for i in range(ni[n]):
+                                    temp[i,j,k,d], = st.unpack(s_format, f.read(r_format))
+
+                    qq.append(copy.deepcopy(temp))
+
+        return xy, qq #, var_list
 
     @staticmethod
     def outputTecplot(xyz, variables, var_name: list, fname='flow-field.dat', append=False):
