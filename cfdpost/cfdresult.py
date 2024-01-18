@@ -1093,7 +1093,30 @@ class cfl3d():
 
     @staticmethod
     def readsurf2d(path: str, fname_grid='surf.g', fname_sol='surf.q', fname_nam='surf.nam', binary=True, _double_precision=False):
+        '''
+        Plot3D Format grid and solution for surface data (for CFL3D v6.8):
 
+        >>> xyz, qq = readPlot3d(path: str, 
+        >>>         fname_grid='surf.g', fname_sol='surf.q', binary=True)
+
+        ### Input:
+        ```text
+        path:       folder that contains the output files
+        fname_grid: grid file name
+        fname_sol:  solution file name
+        binary:     binary or ASCII format
+        ```
+
+        ### Return:
+        ```text
+        xyz:    list of ndarray [ni,nj,nk,3], or None
+        qq:     list of ndarray [ni,nj,nk,5], or None
+                non-dimensionalized RHO, RHO-U, RHO-V, RHO-W, E
+                q1: density by the reference density, rho
+                q*: velocity by the reference speed of sound, ar
+                q5: total energy per unit volume by rho*ar^2
+        ```
+        '''
         if _double_precision:
             r_format = 8
             s_format = 'd'
@@ -1173,6 +1196,9 @@ class cfl3d():
 
                     qq.append(copy.deepcopy(temp))
 
+        else:
+            raise NotImplementedError('read ASCII file of surface not implemented')
+        
         return xy, qq #, var_list
 
     @staticmethod
