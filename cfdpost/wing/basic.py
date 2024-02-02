@@ -151,6 +151,27 @@ class Wing():
         if 'half_span' not in self.g.keys():
             self.g['half_span'] = (0.5 * self.g['aspect_ratio'] * self.g['ref_area'])**0.5
 
+    def thin_wing(self):
+
+        k = 20
+        c_alpha = 2 * math.pi
+
+        thetas = (np.arange(k / 2) + 1) / k * np.pi
+
+        mus = (1 - (1 - self.g['tapper_ratio']) * np.cos(thetas)) * c_alpha / (8 * self.g['half_span'])
+        a1 = np.array([(nn * mus + np.sin(thetas)) * np.sin(nn * thetas) for nn in range(1, k, 2)])
+        b1 = mus * np.sin(thetas)
+        xx = np.linalg.solve(a1.transpose(), b1)
+
+        return xx
+
+    def downwash_angle(self, etas, xx):
+        
+        k = 20
+        thetas = np.arccos(etas)
+        dacoef = [np.sum(np.arange(1, k, 2) * xx * np.sin(np.arange(1, k, 2) * theta) / np.sin(theta)) / np.pi for theta in thetas]
+        return np.array(dacoef)
+
 
     def _init_blocks(self):
         self.surface_blocks = []
@@ -216,7 +237,7 @@ class Wing():
             new_block[:, :, 17]     = data[1] # cftau
         self.surface_blocks.append(new_block)
 
-    def get_normal_cf(self):
+    def _get_normal_cf(self):
         '''
         calculate the cf_normal and cf_tangent
 
@@ -250,6 +271,13 @@ class Wing():
         # print(cftg[:, 0], self.surface_blocks[0][:, 0, -2])
         # return cftg, cfnm
 
+    @property
+    def cf_normal(self):
+        if not self.cf_expanded:
+            self._get_normal_cf()
+        return self.surface_blocks[0][:, :, 17]
+        
+
     def get_formatted_surface(self):
         '''
         get formatted surface data for model training
@@ -265,7 +293,7 @@ class Wing():
         ```
         '''
         if not self.cf_expanded:
-            self.get_normal_cf()
+            self._get_normal_cf()
 
         blk = self.surface_blocks[0]
         data = np.take(blk, [0, 1, 2, 9, 15, 17, 18], axis=2)
@@ -301,23 +329,23 @@ class Wing():
     
     def section_surface_distribution(self, y=None, eta=None, norm=False):
 
-        return Wing.interpolate_section(self.surface_blocks[0][:, :, 0], y=y, eta=eta, norm=norm)
+        return Wing.interpolate_section(self.surface_blocks[0], y=y, eta=eta, norm=norm)
         
     def lift_distribution(self, vis: bool = False):
         blk = self.surface_blocks[0]
-        y = blk[:, 0, 0, 2]
+        y = blk[:, 0, 2]
         cl = np.zeros((blk.shape[0]))
         cd = np.zeros((blk.shape[0]))
 
         self.cl = np.zeros((2,))
 
         if vis:
-            cftg, _ = self.get_normal_cf()
+            cftg = self.cf_normal
         else:
-            cftg = np.zeros_like(blk[:, :, 0, 0])
+            cftg = np.zeros_like(blk[:, :, 0])
 
         for i in range(blk.shape[0]-1):
-            cd[i], cl[i] = get_force_1d(blk[i, :, 0, 0:2], self.aoa, blk[i, :, 0, 9], cftg[i])
+            cd[i], cl[i] = get_force_1d(blk[i, :, 0:2], self.aoa, blk[i, :, 9], cftg[i])
             self.cl += np.array([cl[i], cd[i]]) * (y[i+1] - y[i]) * 0.5 / self.g['ref_area']
             if i > 0: 
                 self.cl += np.array([cl[i], cd[i]]) * (y[i] - y[i-1]) * 0.5 / self.g['ref_area']
@@ -337,8 +365,11 @@ class Wing():
 
         return y, cl, cd
     
+    def sectional_chord_eta(self, eta):
+        return 1 - (1 - self.g['tapper_ratio']) * eta
+
     def sectional_chord(self, y):
-        return 1 - (1 - self.g['tapper_ratio']) * y / self.g['half_span']
+        return self.sectional_chord_eta(y / self.g['half_span'])
     
     def section_lift_coefficient(self, y):
 
@@ -477,3 +508,18 @@ def plot_2d_wing(surface, profile_surface=None, contour=4, vrange=(None, None), 
     else:
         plt.savefig(write_to_file)
 
+if __name__ == '__main__':
+
+    wing_param = {"swept_angle": 0.,
+                  "dihedral_angle": 0., 
+                  "aspect_ratio": 2 * np.pi, 
+                  "tapper_ratio": 1., 
+                  "tip_twist_angle": 0., 
+                  "tip2root_thickness_ratio": 1.}
+    
+    wg = Wing(geometry=wing_param)
+
+    xx = wg.thin_wing()
+    print(xx)
+    dalpha = wg.downwash_angle(np.arange(0.1, 0.9, 0.1), xx)
+    print(dalpha)
