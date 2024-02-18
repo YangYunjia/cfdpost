@@ -1153,8 +1153,8 @@ class cfl3d():
                     # print(ni[n], nj[n], nk[n])
                 _, = st.unpack('i', f.read(4))
 
-                _, = st.unpack('i', f.read(4))
                 for n in range(num_block):
+                    _, = st.unpack('i', f.read(4))
                     temp  = np.zeros((ni[n],nj[n],nk[n],3))
                     # print(temp.shape)
                     for v in range(3):
@@ -1162,8 +1162,10 @@ class cfl3d():
                             for j in range(nj[n]):
                                 for i in range(ni[n]):
                                     temp[i,j,k,v], = st.unpack(s_format, f.read(r_format))
-
+                    # print(temp.shape, temp[:, 0, 0, 2])
+                    # print(temp.shape, temp[:, -1, -1, 2])
                     xy.append(copy.deepcopy(temp))
+                    _, = st.unpack('i', f.read(4))
 
             with open(os.path.join(path, fname_sol), 'rb') as f:
                 
@@ -1179,8 +1181,8 @@ class cfl3d():
                     ni[n],nj[n],nk[n],nv[n], = st.unpack('iiii', f.read(16))
                 _, = st.unpack('i', f.read(4))
 
-                _, = st.unpack('i', f.read(4))
                 for n in range(num_block):
+                    _, = st.unpack('i', f.read(4))
                     temp = np.zeros((ni[n],nj[n],nk[n],nv[n]))
 
                     # mach, = st.unpack(s_format, f.read(r_format))   # freestream Mach number
@@ -1195,6 +1197,7 @@ class cfl3d():
                                     temp[i,j,k,d], = st.unpack(s_format, f.read(r_format))
 
                     qq.append(copy.deepcopy(temp))
+                    _, = st.unpack('i', f.read(4))
 
         else:
             raise NotImplementedError('read ASCII file of surface not implemented')
