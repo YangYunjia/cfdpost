@@ -168,15 +168,15 @@ class Wing():
     def downwash_angle(self, etas, xx):
         
         k = 20
-        thetas = np.arccos(etas)
+
+        thetas = np.arccos(np.minimum(etas, 1.0 - 1e-5))
         dacoef = [np.sum(np.arange(1, k, 2) * xx * np.sin(np.arange(1, k, 2) * theta) / np.sin(theta)) / np.pi for theta in thetas]
         return np.array(dacoef)
 
-
     def _init_blocks(self):
         self.surface_blocks = []
-        self.tail_blocks = []
-        self.tip_blocks = []
+        # self.tail_blocks = []
+        # self.tip_blocks = []
 
     def read_prt(self, path, mode='surf'):
         '''
@@ -216,25 +216,34 @@ class Wing():
         else:
             block_p, block_v = cfl3d.readprt(path)
             blocks = [np.concatenate((block_p[i], block_v[i]), axis=3) for i in range(len(block_p))]
-        self.surface_blocks.append(blocks[0][:, :, 0])
-        self.tail_blocks.append(blocks[1])
-        self.tip_blocks.append(blocks[2])
 
-        sectional_1 = self.surface_blocks[0][0, :]
-        sectional_2 = self.surface_blocks[-1][-1, :]
+        n_sec = int(len(blocks) / 2)
+
+        _surface_blocks = []
+
+        for i_sec in range(n_sec):
+            _surface_blocks.append(blocks[2 * i_sec][int(i_sec > 0):, :, 0])
+            # self.tail_blocks.append(blocks[i_sec+1])
+            # self.tip_blocks.append(blocks[i_sec+2])
+        self.surface_blocks.append(np.concatenate(_surface_blocks))
+        # sectional_1 = self.surface_blocks[0][0, :]
+        # sectional_2 = self.surface_blocks[-1][-1, :]
 
         # print(self.surface_blocks[0].shape)
 
-    def read_formatted_surface(self, geometry: np.ndarray, data: np.ndarray):
+    def read_formatted_surface(self, geometry: np.ndarray, data: np.ndarray, isnormed: bool = False):
         self._init_blocks()
         new_block = np.zeros((geometry.shape[1], geometry.shape[2], 19))
         new_block[:, :, 0:3]    = geometry.transpose((1, 2, 0))
         if data.shape[0] == 1:
             new_block[:, :, 9]      = data[0]
+        elif data.shape[0] == 2:
+            new_block[:, :, 9]      = data[0]
+            new_block[:, :, 17]     = data[1] / (1, 200)[isnormed] # cftau
         elif data.shape[0] == 3:
             new_block[:, :, 9]      = data[0]
-            new_block[:, :, 15]     = data[2] # cfy
-            new_block[:, :, 17]     = data[1] # cftau
+            new_block[:, :, 15]     = data[2] / (1, 250)[isnormed] # cfy
+            new_block[:, :, 17]     = data[1] / (1, 200)[isnormed] # cftau
         self.surface_blocks.append(new_block)
 
     def _get_normal_cf(self):
@@ -277,7 +286,6 @@ class Wing():
             self._get_normal_cf()
         return self.surface_blocks[0][:, :, 17]
         
-
     def get_formatted_surface(self):
         '''
         get formatted surface data for model training
@@ -299,39 +307,11 @@ class Wing():
         data = np.take(blk, [0, 1, 2, 9, 15, 17, 18], axis=2)
         return data
 
-    @staticmethod
-    def interpolate_section(surface, y=None, eta=None, norm=False):
-
-        # blk = self.surface_blocks[0][:, :, 0]
-        sectional = np.zeros((surface.shape[1], surface.shape[2]))
-
-        if y is None:
-            if eta is not None:
-                y = eta * surface[-1, 0, 2]
-            else:
-                raise KeyError('at least y or eta should be assigned')
-
-        for i in range(surface.shape[0] - 1):
-            # print(blk[i, 0, 0, 0:3])
-            if surface[i, 0, 2] < y and surface[i+1, 0, 2] > y:
-                sectional = surface[i, :] + (surface[i+1, :] - surface[i, :]) * (y - surface[i, 0, 2]) / (surface[i+1, 0, 2] - surface[i, 0, 2])
-                break
-        else:
-            print('not found')
-
-        if norm:
-            xmin = np.min(sectional[:, 0])
-            xmax = np.max(sectional[:, 0])
-            sectional[:, 0] = (sectional[:, 0] - xmin) / (xmax - xmin)
-            sectional[:, 1] = (sectional[:, 1] - xmin) / (xmax - xmin)
-
-        return sectional
-    
     def section_surface_distribution(self, y=None, eta=None, norm=False):
 
-        return Wing.interpolate_section(self.surface_blocks[0], y=y, eta=eta, norm=norm)
+        return interpolate_section(self.surface_blocks[0], y=y, eta=eta, norm=norm)
         
-    def lift_distribution(self, vis: bool = False):
+    def lift_distribution(self, vis: bool = True):
         blk = self.surface_blocks[0]
         y = blk[:, 0, 2]
         cl = np.zeros((blk.shape[0]))
@@ -365,10 +345,10 @@ class Wing():
 
         return y, cl, cd
     
-    def sectional_chord_eta(self, eta):
+    def sectional_chord_eta(self, eta: float | np.ndarray):
         return 1 - (1 - self.g['tapper_ratio']) * eta
 
-    def sectional_chord(self, y):
+    def sectional_chord(self, y: float | np.ndarray):
         return self.sectional_chord_eta(y / self.g['half_span'])
     
     def section_lift_coefficient(self, y):
@@ -407,7 +387,7 @@ class Wing():
         ar  = self.g['aspect_ratio']
 
         return math.atan(math.tan(sa0 / DEGREE) + chord * 4 * (tr - 1) / (ar * (1 + tr))) * DEGREE
-
+    
     #* =============================
     # below are functions for plot a wing
     def plot_wing(self, contour=4):
@@ -434,7 +414,7 @@ class Wing():
         plt.show()
 
     def plot_2d(self, contour_option, contour=4, vrange=(None, None), text: dict = {}, reverse_y=1,
-                     write_to_file = None):
+                    etas : np.ndarray = np.linspace(0.1, 0.9, 5), write_to_file = None):
         
         blk = self.surface_blocks[0]
         surfaces = []
@@ -442,17 +422,84 @@ class Wing():
             if op in ['full']:  surfaces.append(blk)
             elif op in ['upper']:   surfaces.append(blk[:, self.leading_edge_index:])
         
-        plot_2d_wing(surfaces[0], surfaces[1], contour, vrange, text, reverse_y, write_to_file)
+        plot_2d_wing(surfaces[0], surfaces[1], contour, vrange, text, reverse_y, etas, write_to_file)
 
 
-def plot_compare_2d_wing(wg1: Wing, wg2: Wing, contour=4, vrange=(None, None), reverse_y=1, write_to_file = None):
+class KinkWing(Wing):
+
+    def read_geometry(self, geometry: dict):
+        must_keys = ["swept_angle", "dihedral_angle", "aspect_ratio", "kink", "tapper_ratio_in", "tapper_ratio_ou",
+                     "tip_twist_in", "tip_twist_ou", "tip2root_thickness_ratio"]
+
+        if sum([kk not in geometry.keys() for kk in must_keys]) > 0:
+            raise ValueError('geometry dictionary is missing keys')
+
+        self.g = geometry
+        if 'half_span' not in self.g.keys():
+            self.g['half_span'] = 1/4 * self.g['aspect_ratio'] * (self.g['kink'] * (1 + self.g['tapper_ratio_in']) 
+                                                               + (1 - self.g['kink']) * self.g['tapper_ratio_in'] * (1 + self.g['tapper_ratio_ou']))
+            self.g['ref_area'] = 4 * self.g['half_span']**2 / self.g['aspect_ratio']
+
+            self.g['inner_span'] = self.g['kink'] * self.g['half_span']
+            self.g['outer_span'] = (1 - self.g['kink']) * self.g['half_span']
+
+    def sectional_chord_eta(self, eta: float | np.ndarray):
+        etak = self.g['kink']
+        if eta < etak:
+            return 1 - (1 - self.g['tapper_ratio_in']) * eta / etak
+        else:
+            return self.g['tapper_ratio_in'] * (1 - (1 - self.g['tapper_ratio_out']) * (eta - etak) / (1 - etak))
+
+    def sectional_chord(self, y: float or np.ndarray):
+        return self.sectional_chord_eta(y / self.g['half_span'])
+
+
+
+
+def interpolate_section(surface, y=None, eta=None, norm=False):
+
+    # blk = self.surface_blocks[0][:, :, 0]
+    sectional = np.zeros((surface.shape[1], surface.shape[2]))
+
+    if y is None:
+        if eta is not None:
+            y = eta * surface[-1, 0, 2]
+        else:
+            raise KeyError('at least y or eta should be assigned')
+
+    for i in range(surface.shape[0] - 1):
+        # print(blk[i, 0, 0, 0:3])
+        if surface[i, 0, 2] <= y and surface[i+1, 0, 2] > y:
+            sectional = surface[i, :] + (surface[i+1, :] - surface[i, :]) * (y - surface[i, 0, 2]) / (surface[i+1, 0, 2] - surface[i, 0, 2])
+            break
+    else:
+        print('not found')
+
+    if norm:
+        xmin = np.min(sectional[:, 0])
+        xmax = np.max(sectional[:, 0])
+        sectional[:, 0] = (sectional[:, 0] - xmin) / (xmax - xmin)
+        sectional[:, 1] = (sectional[:, 1] - xmin) / (xmax - xmin)
+
+    return sectional
+
+def plot_compare_2d_wing(wg1: Wing, wg2: Wing, contour=4, vrange=(None, None), reverse_y=1, 
+                         etas: np.ndarray = np.linspace(0.1, 0.9, 5), write_to_file = None):
 
     surfaces = [ww.surface_blocks[0][:, ww.leading_edge_index:] for ww in [wg1, wg2]]
     profiles = [ww.surface_blocks[0] for ww in [wg1, wg2]]
-    plot_2d_wing(surfaces, profiles, contour, vrange, wg1.g, reverse_y, write_to_file)
+
+    wg1.lift_distribution(vis=True)
+    wg2.lift_distribution(vis=True)
+
+    wg1.g['ground_truth_cl'], wg1.g['ground_truth_cd'] = wg1.cl
+    wg1.g['reconstruct_cl'],  wg1.g['reconstruct_cd']  = wg2.cl
+    wg1.g['error_cl_(%)'],  wg1.g['error_cd_(%)']  = abs(wg2.cl - wg1.cl) / wg1.cl * 100
+
+    plot_2d_wing(surfaces, profiles, contour, vrange, wg1.g, reverse_y, etas, write_to_file)
 
 def plot_2d_wing(surface, profile_surface=None, contour=4, vrange=(None, None), text: dict = {}, reverse_y=1,
-                    write_to_file = None):
+                 etas: np.ndarray = np.linspace(0.1, 0.9, 5), write_to_file = None):
     '''
     plot the wing upper surface and several intersections of the wing
 
@@ -474,11 +521,16 @@ def plot_2d_wing(surface, profile_surface=None, contour=4, vrange=(None, None), 
     if isinstance(surface, np.ndarray):
         # print(np.max(pp), np.min(pp))
         cs = ax.contourf(surface[:, :, 2], -surface[:, :, 0], surface[:, :, contour], 200, cmap='gist_rainbow', vmin=vrange[0], vmax=vrange[1])
+        xmax = surface[-1, -1, 2]
         ax.set_xlim(0, 5)
     elif isinstance(surface, list) and len(surface) == 2:
         cs = ax.contourf(surface[0][:, :, 2], -surface[0][:, :, 0], surface[0][:, :, contour], 200, cmap='gist_rainbow', vmin=vrange[0], vmax=vrange[1])
         cs = ax.contourf(-surface[1][:, :, 2], -surface[1][:, :, 0], surface[1][:, :, contour], 200, cmap='gist_rainbow', vmin=vrange[0], vmax=vrange[1])
+        xmax = surface[0][-1, -1, 2]
         ax.set_xlim(-5, 5)
+
+    for eta in etas:
+        plt.plot([eta*xmax, eta*xmax], [-3, 0], ls='--', c='k')
 
     ax.set_ylim(-3, 0)
     ax.set_aspect('equal')
@@ -500,13 +552,16 @@ def plot_2d_wing(surface, profile_surface=None, contour=4, vrange=(None, None), 
             profile_surface = [profile_surface]
         ax = fig.add_subplot(gs[1, i])   
         for idx in range(len(profile_surface)):
-            sec_p = Wing.interpolate_section(profile_surface[idx], eta=0.1+0.2*i)
+            sec_p = interpolate_section(profile_surface[idx], eta=etas[i])
             ax.plot(sec_p[:, 0], reverse_y * sec_p[:, contour], c=colors[idx], ls=lss[idx])
     plt.tight_layout()
     if write_to_file is None:
         plt.show()
     else:
         plt.savefig(write_to_file)
+
+
+
 
 if __name__ == '__main__':
 
