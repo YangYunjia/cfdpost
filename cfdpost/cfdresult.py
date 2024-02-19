@@ -170,10 +170,9 @@ class cfl3d():
         while i<n_all-4 and k<n:
 
             L1 = lines[-i].split()
-            L2 = lines[-i-1].split()
             i += 1
 
-            if L1[2] == L2[2]:
+            if int(L1[2]) == steps:
                 # Duplicated lines of the final step when using multiple blocks
                 continue
 

@@ -448,7 +448,7 @@ class KinkWing(Wing):
         if eta < etak:
             return 1 - (1 - self.g['tapper_ratio_in']) * eta / etak
         else:
-            return self.g['tapper_ratio_in'] * (1 - (1 - self.g['tapper_ratio_out']) * (eta - etak) / (1 - etak))
+            return self.g['tapper_ratio_in'] * (1 - (1 - self.g['tapper_ratio_ou']) * (eta - etak) / (1 - etak))
 
     def sectional_chord(self, y: float or np.ndarray):
         return self.sectional_chord_eta(y / self.g['half_span'])
