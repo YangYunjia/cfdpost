@@ -110,22 +110,23 @@ class Wing():
         0  1  2    3    4    5  6  7  8   9   10   11  12     13    14    15    16  (    17      18)
         ```
     '''
-
-    def __init__(self, geometry: dict = None, aoa: float = None) -> None:
+    _format_geometry_indexs = ['id', 'AoA', 'Mach', 'swept_angle', 'dihedral_angle', 'aspect_ratio', 'tapper_ratio',  
+                'tip_twist_angle', 'tip2root_thickness_ratio', 'ref_area']
+    
+    def __init__(self, geometry: np.ndarray or dict = None, aoa: float = None) -> None:
 
         self.g = {}
+        
         if geometry is not None:
-            self.read_geometry(geometry)
-
-        if 'aoa' in self.g.keys(): self.aoa = self.g['aoa']
-        elif 'AoA' in self.g.keys(): self.aoa = self.g['AoA']
-        else:
-            self.aoa = aoa
+            if isinstance(geometry, dict):   self.read_geometry(geometry, aoa)
+            elif isinstance(geometry, np.ndarray): self.read_formatted_geometry(geometry, aoa)
 
         self._init_blocks()
         self.var_list = []
         self.cl = np.zeros((2,))
         self.cl_curve = None
+
+
 
     @property
     def leading_edge_index(self):
@@ -138,7 +139,7 @@ class Wing():
         '''
         return len(self.surface_blocks[0][0, 0]) > 17 and self.surface_blocks[0][:, :, 17].any() != 0.
 
-    def read_geometry(self, geometry: dict):
+    def read_geometry(self, geometry: dict, aoa: float = None):
 
         must_keys = ["swept_angle", "dihedral_angle", "aspect_ratio", "tapper_ratio", "tip_twist_angle", "tip2root_thickness_ratio"]
 
@@ -150,6 +151,11 @@ class Wing():
             self.g['ref_area'] = 0.125 * self.g['aspect_ratio'] * (1 + self.g['tapper_ratio'])**2
         if 'half_span' not in self.g.keys():
             self.g['half_span'] = (0.5 * self.g['aspect_ratio'] * self.g['ref_area'])**0.5
+        
+        if 'aoa' in self.g.keys(): self.aoa = self.g['aoa']
+        elif 'AoA' in self.g.keys(): self.aoa = self.g['AoA']
+        else:
+            self.aoa = aoa
 
     def thin_wing(self):
 
@@ -245,6 +251,19 @@ class Wing():
             new_block[:, :, 15]     = data[2] / (1, 250)[isnormed] # cfy
             new_block[:, :, 17]     = data[1] / (1, 200)[isnormed] # cftau
         self.surface_blocks.append(new_block)
+
+    def read_formatted_geometry(self, geometry: np.ndarray, aoa: float = None):
+        '''
+        indexs:
+        'id', 'AoA', 'Mach', 'swept_angle', 'dihedral_angle', 'aspect_ratio', 'tapper_ratio',  
+                'tip_twist_angle', 'tipgj2root_thickness_ratio', 'ref_area'
+        '''
+        
+        wing_param = {}
+        for idx, key in enumerate(self.__class__._format_geometry_indexs):
+            wing_param[key] = float(geometry[idx])
+        
+        self.read_geometry(wing_param, aoa)
 
     def _get_normal_cf(self):
         '''
@@ -345,10 +364,10 @@ class Wing():
 
         return y, cl, cd
     
-    def sectional_chord_eta(self, eta: float | np.ndarray):
+    def sectional_chord_eta(self, eta: float or np.ndarray):
         return 1 - (1 - self.g['tapper_ratio']) * eta
 
-    def sectional_chord(self, y: float | np.ndarray):
+    def sectional_chord(self, y: float or np.ndarray):
         return self.sectional_chord_eta(y / self.g['half_span'])
     
     def section_lift_coefficient(self, y):
@@ -426,8 +445,11 @@ class Wing():
 
 
 class KinkWing(Wing):
+    
+    _format_geometry_indexs = ['id', 'AoA', 'Mach', 'swept_angle', 'dihedral_angle', 'aspect_ratio', 'kink', 'tapper_ratio_in', 'tapper_ratio_ou', 
+                'tip2root_thickness_ratio', 'tip_twist_in', 'tip_twist_ou', 'ref_area']
 
-    def read_geometry(self, geometry: dict):
+    def read_geometry(self, geometry: dict, aoa: float = None):
         must_keys = ["swept_angle", "dihedral_angle", "aspect_ratio", "kink", "tapper_ratio_in", "tapper_ratio_ou",
                      "tip_twist_in", "tip_twist_ou", "tip2root_thickness_ratio"]
 
@@ -443,7 +465,12 @@ class KinkWing(Wing):
             self.g['inner_span'] = self.g['kink'] * self.g['half_span']
             self.g['outer_span'] = (1 - self.g['kink']) * self.g['half_span']
 
-    def sectional_chord_eta(self, eta: float | np.ndarray):
+        if 'aoa' in self.g.keys(): self.aoa = self.g['aoa']
+        elif 'AoA' in self.g.keys(): self.aoa = self.g['AoA']
+        else:
+            self.aoa = aoa
+
+    def sectional_chord_eta(self, eta: float or np.ndarray):
         etak = self.g['kink']
         if eta < etak:
             return 1 - (1 - self.g['tapper_ratio_in']) * eta / etak
@@ -452,7 +479,6 @@ class KinkWing(Wing):
 
     def sectional_chord(self, y: float or np.ndarray):
         return self.sectional_chord_eta(y / self.g['half_span'])
-
 
 
 
