@@ -7,6 +7,8 @@ import copy
 
 from matplotlib import pyplot as plt
 from matplotlib import colormaps as cm
+from matplotlib.figure import Figure
+from matplotlib.axes import Axes
 
 
 _rot_metrix = np.array([[[1.0,0], [0,1.0]], [[0,-1.0], [1.0,0]]])
@@ -90,6 +92,10 @@ def get_force_1d(geom: np.ndarray, aoa: float, cp: np.ndarray, cf: np.ndarray=No
     '''
     dfp = get_xyforce_1d(geom, cp, cf)
     return _xy_2_cl(dfp, aoa)
+
+#* auxilary functions
+def _swept_angle(chord, sa0, ar, tr):
+    return math.atan(math.tan(sa0 / DEGREE) + chord * 4 * (tr - 1) / (ar * (1 + tr))) * DEGREE
 
 
 
@@ -405,7 +411,7 @@ class Wing():
         tr  = self.g['tapper_ratio']
         ar  = self.g['aspect_ratio']
 
-        return math.atan(math.tan(sa0 / DEGREE) + chord * 4 * (tr - 1) / (ar * (1 + tr))) * DEGREE
+        return _swept_angle(chord, sa0, ar, tr)
     
     #* =============================
     # below are functions for plot a wing
@@ -496,6 +502,7 @@ def interpolate_section(surface, y=None, eta=None, norm=False):
     for i in range(surface.shape[0] - 1):
         # print(blk[i, 0, 0, 0:3])
         if surface[i, 0, 2] <= y and surface[i+1, 0, 2] > y:
+            print(i, y)
             sectional = surface[i, :] + (surface[i+1, :] - surface[i, :]) * (y - surface[i, 0, 2]) / (surface[i+1, 0, 2] - surface[i, 0, 2])
             break
     else:
@@ -524,6 +531,36 @@ def plot_compare_2d_wing(wg1: Wing, wg2: Wing, contour=4, vrange=(None, None), r
 
     plot_2d_wing(surfaces, profiles, contour, vrange, wg1.g, reverse_y, etas, write_to_file)
 
+def plot_2d_wing_surface(ax: Axes, surface, contour=4, vrange=(None, None), text: dict = {},
+                 etas: np.ndarray = np.linspace(0.1, 0.9, 5), xrange=(0, 5), yrange=(-3, 0), cmap='gist_rainbow'):
+    
+    if isinstance(surface, np.ndarray):
+        # print(np.max(pp), np.min(pp))
+        cs = ax.contourf(-surface[:, :, 2], surface[:, :, 0], surface[:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
+        xmax = surface[-1, -1, 2]
+        ax.set_xlim(xrange)
+    elif isinstance(surface, list) and len(surface) == 2:
+        cs = ax.contourf(surface[0][:, :, 2], -surface[0][:, :, 0], surface[0][:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
+        cs = ax.contourf(-surface[1][:, :, 2], -surface[1][:, :, 0], surface[1][:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
+        xmax = surface[0][-1, -1, 2]
+        ax.set_xlim(-5, 5)
+
+    for eta in etas:
+        plt.plot([eta*xmax, eta*xmax], [-3, 0], ls='--', c='k')
+
+    ax.set_ylim(yrange)
+    ax.set_aspect('equal')
+    # cbr = fig.colorbar(cs, fraction=0.01, pad=0.01)
+    
+    text_x = 3.5
+    text_y = -0.1
+    for key in text.keys():
+        if isinstance(text[key], float):
+            ax.text(text_x, text_y, key + ':     %.4f' % text[key])
+            text_y -= 0.1
+
+    return ax, cs
+
 def plot_2d_wing(surface, profile_surface=None, contour=4, vrange=(None, None), text: dict = {}, reverse_y=1,
                  etas: np.ndarray = np.linspace(0.1, 0.9, 5), write_to_file = None):
     '''
@@ -544,30 +581,8 @@ def plot_2d_wing(surface, profile_surface=None, contour=4, vrange=(None, None), 
     # print(upper_surface.shape)
     ax = fig.add_subplot(gs[0, :])
 
-    if isinstance(surface, np.ndarray):
-        # print(np.max(pp), np.min(pp))
-        cs = ax.contourf(surface[:, :, 2], -surface[:, :, 0], surface[:, :, contour], 200, cmap='gist_rainbow', vmin=vrange[0], vmax=vrange[1])
-        xmax = surface[-1, -1, 2]
-        ax.set_xlim(0, 5)
-    elif isinstance(surface, list) and len(surface) == 2:
-        cs = ax.contourf(surface[0][:, :, 2], -surface[0][:, :, 0], surface[0][:, :, contour], 200, cmap='gist_rainbow', vmin=vrange[0], vmax=vrange[1])
-        cs = ax.contourf(-surface[1][:, :, 2], -surface[1][:, :, 0], surface[1][:, :, contour], 200, cmap='gist_rainbow', vmin=vrange[0], vmax=vrange[1])
-        xmax = surface[0][-1, -1, 2]
-        ax.set_xlim(-5, 5)
+    ax, cs = plot_2d_wing_surface(ax, surface, contour, vrange, text, etas)
 
-    for eta in etas:
-        plt.plot([eta*xmax, eta*xmax], [-3, 0], ls='--', c='k')
-
-    ax.set_ylim(-3, 0)
-    ax.set_aspect('equal')
-    cbr = fig.colorbar(cs, fraction=0.01, pad=0.01)
-    
-    text_x = 3.5
-    text_y = -0.1
-    for key in text.keys():
-        if isinstance(text[key], float):
-            ax.text(text_x, text_y, key + ':     %.4f' % text[key])
-            text_y -= 0.1
     # plt.show()
 
     # plt.figure(figsize=(2, 10))
@@ -586,8 +601,45 @@ def plot_2d_wing(surface, profile_surface=None, contour=4, vrange=(None, None), 
     else:
         plt.savefig(write_to_file)
 
+def points2line(p1, p2):
+    return ([p1[0], p2[0]], [p1[1], p2[1]])
 
+def plot_top_view(ax: Axes, sa0, ar, tr):
+    p1 = [0, 0]
+    p2 = [0, 1]
+    half_span = (0.5 * ar * 0.125 * ar * (1 + tr)**2)**0.5
+    p3 = [-half_span, half_span * np.tan(sa0 / DEGREE)]
+    p4 = [-half_span, half_span * np.tan(sa0 / DEGREE) + tr]
 
+    plt.plot(*points2line(p1, p2), c='k', ls='-')
+    plt.plot(*points2line(p1, p3), c='k', ls='-')
+    plt.plot(*points2line(p3, p4), c='k', ls='-')
+    plt.plot(*points2line(p2, p4), c='k', ls='-')
+
+    ax.set_aspect('equal')
+
+    return ax
+
+def plot_top_view_kink(ax: Axes, sa0, etak, ar, trin, trout):
+
+    p1 = [0, 0]
+    p2 = [0, 1]
+    half_span = 0.25 * ar * (etak * (1 + trin) + (1 - etak) * trin * (1 + trout))
+    p3 = [-half_span*etak, half_span*etak * np.tan(sa0 / DEGREE)]
+    p4 = [-half_span*etak, half_span*etak * np.tan(sa0 / DEGREE) + trin]
+    p5 = [-half_span, half_span * np.tan(sa0 / DEGREE)]
+    p6 = [-half_span, half_span * np.tan(sa0 / DEGREE) + trin * trout]
+
+    plt.plot(*points2line(p1, p2), c='k', ls='-')
+    plt.plot(*points2line(p1, p5), c='k', ls='-')
+    plt.plot(*points2line(p3, p4), c='k', ls='--')
+    plt.plot(*points2line(p2, p4), c='k', ls='-')
+    plt.plot(*points2line(p5, p6), c='k', ls='-')
+    plt.plot(*points2line(p4, p6), c='k', ls='-')
+
+    ax.set_aspect('equal')
+
+    return ax
 
 if __name__ == '__main__':
 
