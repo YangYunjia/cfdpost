@@ -132,8 +132,6 @@ class Wing():
         self.cl = np.zeros((2,))
         self.cl_curve = None
 
-
-
     @property
     def leading_edge_index(self):
         return np.argmin(self.surface_blocks[0][0, :, 0])
@@ -244,6 +242,18 @@ class Wing():
         # print(self.surface_blocks[0].shape)
 
     def read_formatted_surface(self, geometry: np.ndarray, data: np.ndarray, isnormed: bool = False):
+        '''
+        read np.ndarray data to the wing
+
+        ### paras:
+        - `geometry`:   (N_V, N_Z, N_FOIL) N_V should = 3 (x: streamwise, y, z: spanwise)
+        - `data`:   (N_V, N_Z, N_FOIL) 
+            - N_V = 1:  only Cp include, will be set to V9
+            - N_V = 2:  cp and cftau, will be set to V9 & V17
+            - N_V = 3:  cp, cftau, cfz, will be set to V9, V17, V16 (in old version, V9, V15, V17)
+        - `isnormed`:   if `True`, cftau & cfz will be divided by 200, 250, respectively
+        
+        '''
         self._init_blocks()
         new_block = np.zeros((geometry.shape[1], geometry.shape[2], 19))
         new_block[:, :, 0:3]    = geometry.transpose((1, 2, 0))
@@ -254,7 +264,7 @@ class Wing():
             new_block[:, :, 17]     = data[1] / (1, 200)[isnormed] # cftau
         elif data.shape[0] == 3:
             new_block[:, :, 9]      = data[0]
-            new_block[:, :, 15]     = data[2] / (1, 250)[isnormed] # cfy
+            new_block[:, :, 16]     = data[2] / (1, 250)[isnormed] # cfz
             new_block[:, :, 17]     = data[1] / (1, 200)[isnormed] # cftau
         self.surface_blocks.append(new_block)
 
@@ -268,6 +278,11 @@ class Wing():
         wing_param = {}
         for idx, key in enumerate(self.__class__._format_geometry_indexs):
             wing_param[key] = float(geometry[idx])
+
+        if len(geometry) > 10:
+            wing_param['root_thickness'] = geometry[10]
+            wing_param['cstu'] = geometry[11:21]
+            wing_param['cstl'] = geometry[21:31]
         
         self.read_geometry(wing_param, aoa)
 
@@ -276,7 +291,10 @@ class Wing():
         calculate the cf_normal and cf_tangent
 
         ### self params:
-        - `self.surface_block[0]` should be filled with i_var = 0, 2 (x, z) and 14, 16 (cfx, cfz)
+        - `self.surface_block[0]` should be filled with i_var = 0, 1 (x, y) and 14, 15 (cfx, cfy)
+
+        Remark: Mar 28, 2024  Correction: spanwise should be z-direction, not y-direction
+        - resulting all data (kink 80, kink 160, data 1~3 to be wrong) [marked as 'old']
 
         ### return
         - `cf_tg`, `cf_nm` (`np.ndarray` with size n_sec x n_foil)
@@ -288,16 +306,16 @@ class Wing():
             print('cf_tau and cf_normal is already calculated')
             return
 
-        xz = np.take(blk, [0, 2], axis=2)
+        xz = np.take(blk, [0, 1], axis=2)
         tangens = np.zeros_like(xz)
         tangens[:, 1:-1] = xz[:, 2:] - xz[:, :-2]
         tangens[:, 0]    = xz[:, 1]  - xz[:, 0]
         tangens[:, -1]   = xz[:, -1] - xz[:, -2]
-        tangens = tangens / ((np.sum(tangens**2, axis=2, keepdims=True))**0.5 + 1e-10)
+        tangens = tangens / ((np.sum(tangens**2, axis=2, keepdims=True))**0.5 + 1e-20)
         normals = np.zeros_like(tangens)
         normals[:, :, 0] = -tangens[:, :, 1]
         normals[:, :, 1] = tangens[:, :, 0]
-        cfxz = np.take(blk, [14, 16], axis=2)
+        cfxz = np.take(blk, [14, 15], axis=2)
         cftg = np.einsum('ijk,ijk->ij', tangens, cfxz)
         cfnm = np.einsum('ijk,ijk->ij', normals, cfxz)
 
@@ -317,19 +335,20 @@ class Wing():
 
         ### return
 
-        np.ndarray with size n_sec x n_foil x n_variable (7)
+        np.ndarray with size n_sec x n_foil x n_variable (6)
         
         variables:
         ```text
-        X, Y, Z, CP, CF_Y, CF_TAU, CF_NOR
-        0  1  2   3     4       5       6
+        X, Y, Z, CP, CF_TAU, CF_Z
+        0  1  2   3       4     5
         ```
+        remark: the order is changed on Mar 28, 2024 (bet. Cftau & cfz)
         '''
         if not self.cf_expanded:
             self._get_normal_cf()
 
         blk = self.surface_blocks[0]
-        data = np.take(blk, [0, 1, 2, 9, 15, 17, 18], axis=2)
+        data = np.take(blk, [0, 1, 2, 9, 17, 16], axis=2)
         return data
 
     def section_surface_distribution(self, y=None, eta=None, norm=False):
@@ -448,7 +467,6 @@ class Wing():
             elif op in ['upper']:   surfaces.append(blk[:, self.leading_edge_index:])
         
         plot_2d_wing(surfaces[0], surfaces[1], contour, vrange, text, reverse_y, etas, write_to_file)
-
 
 class KinkWing(Wing):
     
