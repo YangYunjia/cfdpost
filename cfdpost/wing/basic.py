@@ -351,6 +351,26 @@ class Wing():
         data = np.take(blk, [0, 1, 2, 9, 17, 16], axis=2)
         return data
 
+    def check(self):
+        import copy
+        data = self.get_formatted_surface()
+
+        ld = self.leading_edge_index
+        leads = copy.deepcopy(data[:, ld, :2])
+        tails = 0.5 * (data[:, 0, :2] + data[:, -1, :2])
+        chords = np.linalg.norm(tails - leads, axis=1)
+        alphas = np.arctan2((tails - leads)[:, 1], (tails - leads)[:, 0]) / np.pi * 180
+
+        data1 = np.zeros((*data.shape[:2], 2))
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                data1[i, j] = _xy_2_cl(data[i, j, :2]-leads[i], alphas[i])
+            data1[i] /= chords[i]
+            if i == 80:
+                plt.plot(data[i, :, 0], data[i, :, 1])
+                plt.plot(data1[i, :, 0], data1[i, :, 1])
+                plt.savefig('123.png')
+    
     def section_surface_distribution(self, y=None, eta=None, norm=False):
 
         return interpolate_section(self.surface_blocks[0], y=y, eta=eta, norm=norm)
@@ -554,7 +574,7 @@ def plot_2d_wing_surface(ax: Axes, surface, contour=4, vrange=(None, None), text
     
     if isinstance(surface, np.ndarray):
         # print(np.max(pp), np.min(pp))
-        cs = ax.contourf(-surface[:, :, 2], surface[:, :, 0], surface[:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
+        cs = ax.contourf(surface[:, :, 2], -surface[:, :, 0], surface[:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
         xmax = surface[-1, -1, 2]
         ax.set_xlim(xrange)
     elif isinstance(surface, list) and len(surface) == 2:
