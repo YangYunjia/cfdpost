@@ -89,7 +89,8 @@ def get_xyforce_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None):
 def get_moment_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None, ref_point: np.ndarray=np.array([0.25, 0])):
 
     dxyforce = get_dxyforce_1d(geom, cp, cf)
-    return dxyforce[:, 1] * (geom[:, 0] - ref_point[0]) - dxyforce[:, 0] * (geom[:, 1] - ref_point[1])
+    r = 0.5 * (geom[:-1] + geom[1:])
+    return np.sum(dxyforce[:, 1] * (r[:, 0] - ref_point[0]) - dxyforce[:, 0] * (r[:, 1] - ref_point[1]))
 
 def get_force_1d(geom: np.ndarray, aoa: float, cp: np.ndarray, cf: np.ndarray=None):
     '''
@@ -399,6 +400,7 @@ class Wing():
         y = blk[:, 0, 2]
         cl = np.zeros((blk.shape[0]))
         cd = np.zeros((blk.shape[0]))
+        cmz = np.zeros((blk.shape[0]))
 
         self.cl = np.zeros((3,))
 
@@ -409,26 +411,26 @@ class Wing():
 
         for i in range(blk.shape[0]-1):
             cd[i], cl[i] = get_force_1d(blk[i, :, 0:2], self.aoa, blk[i, :, 9], cftg[i])
-            cm[i] = get_moment_1d(blk[i, :, 0:2], blk[i, :, 9], cftg[i])
-            self.cl += np.array([cl[i], cd[i], cm[i]]) * (y[i+1] - y[i]) * 0.5 / self.g['ref_area']
+            cmz[i] = get_moment_1d(blk[i, :, 0:2], blk[i, :, 9], cftg[i])
+            self.cl += np.array([cl[i], cd[i], cmz[i]]) * (y[i+1] - y[i]) * 0.5 / self.g['ref_area']
             if i > 0: 
-                self.cl += np.array([cl[i], cd[i], cm[i]]) * (y[i] - y[i-1]) * 0.5 / self.g['ref_area']
+                self.cl += np.array([cl[i], cd[i], cmz[i]]) * (y[i] - y[i-1]) * 0.5 / self.g['ref_area']
 
-        self.cl_curve = (y, cl, cd, cm)
-        return y, cl, cd, cm
+        self.cl_curve = (y, cl, cd, cmz)
+        return y, cl, cd, cmz
     
     def sectional_lift_distribution(self):
 
         if self.cl_curve is None:
             self.lift_distribution()
         
-        y, cl, cd, cm = copy.deepcopy(self.cl_curve)
+        y, cl, cd, cmz = copy.deepcopy(self.cl_curve)
         for i in range(len(y)):
             cl[i] /= self.sectional_chord(y[i])
             cd[i] /= self.sectional_chord(y[i])
-            cm[i] /= self.sectional_chord(y[i])
+            cmz[i] /= self.sectional_chord(y[i])
 
-        return y, cl, cd, cm
+        return y, cl, cd, cmz
     
     def sectional_chord_eta(self, eta: float or np.ndarray):
         return 1 - (1 - self.g['tapper_ratio']) * eta
@@ -584,9 +586,11 @@ def plot_compare_2d_wing(wg1: Wing, wg2: Wing, contour=4, vrange=(None, None), r
     wg1.lift_distribution(vis=True)
     wg2.lift_distribution(vis=True)
 
-    wg1.g['ground_truth_cl'], wg1.g['ground_truth_cd'] = wg1.cl
-    wg1.g['reconstruct_cl'],  wg1.g['reconstruct_cd']  = wg2.cl
-    wg1.g['error_cl_(%)'],  wg1.g['error_cd_(%)']  = abs(wg2.cl - wg1.cl) / wg1.cl * 100
+    coefs = ['cl', 'cd', 'cmz']
+    for i in range(len(coefs)):
+        wg1.g['truth_' + coefs[i]] = wg1.cl[i]
+        wg1.g['recons_' + coefs[i]] = wg2.cl[i]
+        wg1.g['error(%)_' + coefs[i]] = (abs(wg2.cl - wg1.cl) / wg1.cl * 100)[i]
 
     plot_2d_wing(surfaces, profiles, contour, vrange, wg1.g, reverse_y, etas, write_to_file)
 
