@@ -41,6 +41,28 @@ def _xy_2_cl(dfp: np.ndarray, aoa: float):
 
 
 #* function to extract pressure force from 1-d pressure profile
+
+def get_dxyforce_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None):
+    '''
+    integrate the force on each surface grid cell
+
+    ### retrun
+    np.ndarray (N-1, 2) 
+        (dFx, dFy)
+    
+    '''
+
+    dfp_n  = (0.5 * (cp[1:] + cp[:-1])).reshape((1, -1))
+    if cf is None:
+        dfv_t  = np.zeros_like(dfp_n)
+    else:
+        dfv_t = (0.5 * (cf[1:] + cf[:-1])).reshape((1, -1))
+
+    dr     = (geom[1:] - geom[:-1])
+
+    return np.einsum('lj,lpk,jk->jp', np.concatenate((dfv_t, -dfp_n), axis=0), _rot_metrix, dr)
+
+
 def get_xyforce_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None):
     '''
     integrate the force on x and y direction
@@ -59,18 +81,15 @@ def get_xyforce_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None):
     np.ndarray: (Fx, Fy)
     '''
 
-    dfp_n  = (0.5 * (cp[1:] + cp[:-1])).reshape((1, -1))
-    if cf is None:
-        dfv_t  = np.zeros_like(dfp_n)
-    else:
-        dfv_t = (0.5 * (cf[1:] + cf[:-1])).reshape((1, -1))
-
-    dr     = (geom[1:] - geom[:-1])
-
     dr_tail = geom[0] - geom[-1]
     dfp_n_tail = np.array([0., -0.5 * (cp[0] + cp[-1])])
     
-    return np.einsum('lj,lpk,jk->p', np.concatenate((dfv_t, -dfp_n), axis=0), _rot_metrix, dr) + np.einsum('l,lpk,k', dfp_n_tail, _rot_metrix, dr_tail)
+    return np.sum(get_dxyforce_1d(geom, cp, cf), axis=0) + np.einsum('l,lpk,k', dfp_n_tail, _rot_metrix, dr_tail)
+
+def get_moment_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None, ref_point: np.ndarray=np.array([0.25, 0])):
+
+    dxyforce = get_dxyforce_1d(geom, cp, cf)
+    return dxyforce[:, 1] * (geom[:, 0] - ref_point[0]) - dxyforce[:, 0] * (geom[:, 1] - ref_point[1])
 
 def get_force_1d(geom: np.ndarray, aoa: float, cp: np.ndarray, cf: np.ndarray=None):
     '''
@@ -381,7 +400,7 @@ class Wing():
         cl = np.zeros((blk.shape[0]))
         cd = np.zeros((blk.shape[0]))
 
-        self.cl = np.zeros((2,))
+        self.cl = np.zeros((3,))
 
         if vis:
             cftg = self.cf_normal
@@ -390,24 +409,26 @@ class Wing():
 
         for i in range(blk.shape[0]-1):
             cd[i], cl[i] = get_force_1d(blk[i, :, 0:2], self.aoa, blk[i, :, 9], cftg[i])
-            self.cl += np.array([cl[i], cd[i]]) * (y[i+1] - y[i]) * 0.5 / self.g['ref_area']
+            cm[i] = get_moment_1d(blk[i, :, 0:2], blk[i, :, 9], cftg[i])
+            self.cl += np.array([cl[i], cd[i], cm[i]]) * (y[i+1] - y[i]) * 0.5 / self.g['ref_area']
             if i > 0: 
-                self.cl += np.array([cl[i], cd[i]]) * (y[i] - y[i-1]) * 0.5 / self.g['ref_area']
+                self.cl += np.array([cl[i], cd[i], cm[i]]) * (y[i] - y[i-1]) * 0.5 / self.g['ref_area']
 
-        self.cl_curve = (y, cl, cd)
-        return y, cl, cd
+        self.cl_curve = (y, cl, cd, cm)
+        return y, cl, cd, cm
     
     def sectional_lift_distribution(self):
 
         if self.cl_curve is None:
             self.lift_distribution()
         
-        y, cl, cd = copy.deepcopy(self.cl_curve)
+        y, cl, cd, cm = copy.deepcopy(self.cl_curve)
         for i in range(len(y)):
             cl[i] /= self.sectional_chord(y[i])
             cd[i] /= self.sectional_chord(y[i])
+            cm[i] /= self.sectional_chord(y[i])
 
-        return y, cl, cd
+        return y, cl, cd, cm
     
     def sectional_chord_eta(self, eta: float or np.ndarray):
         return 1 - (1 - self.g['tapper_ratio']) * eta
@@ -420,7 +441,7 @@ class Wing():
         if self.cl_curve is None:
             self.lift_distribution()
         
-        ys, clss, _ = self.cl_curve
+        ys, clss, _, _ = self.cl_curve
         for i in range(len(ys) - 1):
             if ys[i] < y and ys[i+1] > y:
                 section_cl = clss[i] + (clss[i+1] - clss[i]) * (y - ys[i]) / (ys[i+1] - ys[i])
