@@ -595,11 +595,11 @@ def plot_compare_2d_wing(wg1: Wing, wg2: Wing, contour=4, vrange=(None, None), r
     plot_2d_wing(surfaces, profiles, contour, vrange, wg1.g, reverse_y, etas, write_to_file)
 
 def plot_2d_wing_surface(ax: Axes, surface, contour=4, vrange=(None, None), text: dict = {},
-                 etas: np.ndarray = np.linspace(0.1, 0.9, 5), xrange=(0, 5), yrange=(-3, 0), cmap='gist_rainbow'):
+                 etas: np.ndarray = np.linspace(0.1, 0.9, 5), xrange=(0, 5), yrange=(-3, 0), cmap='gist_rainbow', reverse_value=1):
     
     if isinstance(surface, np.ndarray):
         # print(np.max(pp), np.min(pp))
-        cs = ax.contourf(surface[:, :, 2], -surface[:, :, 0], surface[:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
+        cs = ax.contourf(surface[:, :, 2], -surface[:, :, 0], reverse_value * surface[:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
         xmax = surface[-1, -1, 2]
         ax.set_xlim(xrange)
     elif isinstance(surface, list) and len(surface) == 2:
