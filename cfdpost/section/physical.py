@@ -759,9 +759,10 @@ class PhysicalSec(PhysicalSecWall):
         ### Get value of: S, R, mUy
         '''
         # super().locate_sep(self.iLE, self.x.shape[0], x_range=(0.0, 1.0))
-        _mUy, _sepS, _sepR, _sepT = self._locate_sep(self.iLE, self.x.shape[0], x_range=(0.0, 1.0))
+        _mUy, _sepS, _sepR, _sepT = self._locate_sep(self.iLE, self.x.shape[0], x_range=(0.1, 0.9))
+        # print(_mUy, _sepS, _sepR, _sepT)
         for i in range(2):
-            self.xf_dict['mUy'][i+1] = _mUy[i][0]
+            self.xf_dict['mUy'][i+1] = _mUy[i]
             try:
                 self.xf_dict['S'][i+1] = _sepS[i][0]
                 self.xf_dict['R'][i+1] = _sepR[i][0]
@@ -1301,7 +1302,7 @@ class PhysicalSec(PhysicalSecWall):
         Extract flow features list in the dictionary.
         '''
         self.locate_basic()
-        # self.locate_sep()
+        self.locate_sep()
         self.locate_geo()
         i_1 = self.locate_shock(info=info)
         self.locate_BL(i_1)
