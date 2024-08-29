@@ -298,7 +298,12 @@ class Wing():
         '''
         
         wing_param = {}
-        for idx, key in enumerate(self.__class__._format_geometry_indexs):
+        if len(geometry) == 8:
+            index_keys = self.__class__._format_geometry_indexs_short
+        else:
+            index_keys = self.__class__._format_geometry_indexs
+            
+        for idx, key in enumerate(index_keys):
             wing_param[key] = float(geometry[idx])
 
         if len(geometry) > 10:
