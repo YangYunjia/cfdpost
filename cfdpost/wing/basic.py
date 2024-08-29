@@ -41,6 +41,28 @@ def _xy_2_cl(dfp: np.ndarray, aoa: float):
 
 
 #* function to extract pressure force from 1-d pressure profile
+
+def get_dxyforce_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None):
+    '''
+    integrate the force on each surface grid cell
+
+    ### retrun
+    np.ndarray (N-1, 2) 
+        (dFx, dFy)
+    
+    '''
+
+    dfp_n  = (0.5 * (cp[1:] + cp[:-1])).reshape((1, -1))
+    if cf is None:
+        dfv_t  = np.zeros_like(dfp_n)
+    else:
+        dfv_t = (0.5 * (cf[1:] + cf[:-1])).reshape((1, -1))
+
+    dr     = (geom[1:] - geom[:-1])
+
+    return np.einsum('lj,lpk,jk->jp', np.concatenate((dfv_t, -dfp_n), axis=0), _rot_metrix, dr)
+
+
 def get_xyforce_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None):
     '''
     integrate the force on x and y direction
@@ -59,18 +81,16 @@ def get_xyforce_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None):
     np.ndarray: (Fx, Fy)
     '''
 
-    dfp_n  = (0.5 * (cp[1:] + cp[:-1])).reshape((1, -1))
-    if cf is None:
-        dfv_t  = np.zeros_like(dfp_n)
-    else:
-        dfv_t = (0.5 * (cf[1:] + cf[:-1])).reshape((1, -1))
-
-    dr     = (geom[1:] - geom[:-1])
-
     dr_tail = geom[0] - geom[-1]
     dfp_n_tail = np.array([0., -0.5 * (cp[0] + cp[-1])])
     
-    return np.einsum('lj,lpk,jk->p', np.concatenate((dfv_t, -dfp_n), axis=0), _rot_metrix, dr) + np.einsum('l,lpk,k', dfp_n_tail, _rot_metrix, dr_tail)
+    return np.sum(get_dxyforce_1d(geom, cp, cf), axis=0) + np.einsum('l,lpk,k', dfp_n_tail, _rot_metrix, dr_tail)
+
+def get_moment_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None, ref_point: np.ndarray=np.array([0.25, 0])):
+
+    dxyforce = get_dxyforce_1d(geom, cp, cf)
+    r = 0.5 * (geom[:-1] + geom[1:])
+    return np.sum(dxyforce[:, 1] * (r[:, 0] - ref_point[0]) - dxyforce[:, 0] * (r[:, 1] - ref_point[1]))
 
 def get_force_1d(geom: np.ndarray, aoa: float, cp: np.ndarray, cf: np.ndarray=None):
     '''
@@ -133,8 +153,6 @@ class Wing():
         self.var_list = []
         self.cl = np.zeros((2,))
         self.cl_curve = None
-
-
 
     @property
     def leading_edge_index(self):
@@ -280,13 +298,13 @@ class Wing():
         '''
         
         wing_param = {}
-        if len(geometry) == 8:
-            index_keys = self.__class__._format_geometry_indexs_short
-        else:
-            index_keys = self.__class__._format_geometry_indexs
-            
-        for idx, key in enumerate(index_keys):
+        for idx, key in enumerate(self.__class__._format_geometry_indexs):
             wing_param[key] = float(geometry[idx])
+
+        if len(geometry) > 10:
+            wing_param['root_thickness'] = geometry[10]
+            wing_param['cstu'] = geometry[11:21]
+            wing_param['cstl'] = geometry[21:31]
         
         self.read_geometry(wing_param, aoa)
 
@@ -355,6 +373,26 @@ class Wing():
         data = np.take(blk, [0, 1, 2, 9, 17, 16], axis=2)
         return data
 
+    def check(self):
+        import copy
+        data = self.get_formatted_surface()
+
+        ld = self.leading_edge_index
+        leads = copy.deepcopy(data[:, ld, :2])
+        tails = 0.5 * (data[:, 0, :2] + data[:, -1, :2])
+        chords = np.linalg.norm(tails - leads, axis=1)
+        alphas = np.arctan2((tails - leads)[:, 1], (tails - leads)[:, 0]) / np.pi * 180
+
+        data1 = np.zeros((*data.shape[:2], 2))
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                data1[i, j] = _xy_2_cl(data[i, j, :2]-leads[i], alphas[i])
+            data1[i] /= chords[i]
+            if i == 80:
+                plt.plot(data[i, :, 0], data[i, :, 1])
+                plt.plot(data1[i, :, 0], data1[i, :, 1])
+                plt.savefig('123.png')
+    
     def section_surface_distribution(self, y=None, eta=None, norm=False):
 
         return interpolate_section(self.surface_blocks[0], y=y, eta=eta, norm=norm)
@@ -364,8 +402,9 @@ class Wing():
         y = blk[:, 0, 2]
         cl = np.zeros((blk.shape[0]))
         cd = np.zeros((blk.shape[0]))
+        cmz = np.zeros((blk.shape[0]))
 
-        self.cl = np.zeros((2,))
+        self.cl = np.zeros((3,))
 
         if vis:
             cftg = self.cf_normal
@@ -374,24 +413,26 @@ class Wing():
 
         for i in range(blk.shape[0]-1):
             cd[i], cl[i] = get_force_1d(blk[i, :, 0:2], self.aoa, blk[i, :, 9], cftg[i])
-            self.cl += np.array([cl[i], cd[i]]) * (y[i+1] - y[i]) * 0.5 / self.g['ref_area']
+            cmz[i] = get_moment_1d(blk[i, :, 0:2], blk[i, :, 9], cftg[i])
+            self.cl += np.array([cl[i], cd[i], cmz[i]]) * (y[i+1] - y[i]) * 0.5 / self.g['ref_area']
             if i > 0: 
-                self.cl += np.array([cl[i], cd[i]]) * (y[i] - y[i-1]) * 0.5 / self.g['ref_area']
+                self.cl += np.array([cl[i], cd[i], cmz[i]]) * (y[i] - y[i-1]) * 0.5 / self.g['ref_area']
 
-        self.cl_curve = (y, cl, cd)
-        return y, cl, cd
+        self.cl_curve = (y, cl, cd, cmz)
+        return y, cl, cd, cmz
     
     def sectional_lift_distribution(self):
 
         if self.cl_curve is None:
             self.lift_distribution()
         
-        y, cl, cd = copy.deepcopy(self.cl_curve)
+        y, cl, cd, cmz = copy.deepcopy(self.cl_curve)
         for i in range(len(y)):
             cl[i] /= self.sectional_chord(y[i])
             cd[i] /= self.sectional_chord(y[i])
+            cmz[i] /= self.sectional_chord(y[i])
 
-        return y, cl, cd
+        return y, cl, cd, cmz
     
     def sectional_chord_eta(self, eta: float or np.ndarray):
         return 1 - (1 - self.g['tapper_ratio']) * eta
@@ -404,7 +445,7 @@ class Wing():
         if self.cl_curve is None:
             self.lift_distribution()
         
-        ys, clss, _ = self.cl_curve
+        ys, clss, _, _ = self.cl_curve
         for i in range(len(ys) - 1):
             if ys[i] < y and ys[i+1] > y:
                 section_cl = clss[i] + (clss[i+1] - clss[i]) * (y - ys[i]) / (ys[i+1] - ys[i])
@@ -471,7 +512,6 @@ class Wing():
             elif op in ['upper']:   surfaces.append(blk[:, self.leading_edge_index:])
         
         plot_2d_wing(surfaces[0], surfaces[1], contour, vrange, text, reverse_y, etas, write_to_file)
-
 
 class KinkWing(Wing):
     
@@ -548,18 +588,20 @@ def plot_compare_2d_wing(wg1: Wing, wg2: Wing, contour=4, vrange=(None, None), r
     wg1.lift_distribution(vis=True)
     wg2.lift_distribution(vis=True)
 
-    wg1.g['ground_truth_cl'], wg1.g['ground_truth_cd'] = wg1.cl
-    wg1.g['reconstruct_cl'],  wg1.g['reconstruct_cd']  = wg2.cl
-    wg1.g['error_cl_(%)'],  wg1.g['error_cd_(%)']  = abs(wg2.cl - wg1.cl) / wg1.cl * 100
+    coefs = ['cl', 'cd', 'cmz']
+    for i in range(len(coefs)):
+        wg1.g['truth_' + coefs[i]] = wg1.cl[i]
+        wg1.g['recons_' + coefs[i]] = wg2.cl[i]
+        wg1.g['error(%)_' + coefs[i]] = (abs(wg2.cl - wg1.cl) / wg1.cl * 100)[i]
 
     plot_2d_wing(surfaces, profiles, contour, vrange, wg1.g, reverse_y, etas, write_to_file)
 
 def plot_2d_wing_surface(ax: Axes, surface, contour=4, vrange=(None, None), text: dict = {},
-                 etas: np.ndarray = np.linspace(0.1, 0.9, 5), xrange=(0, 5), yrange=(-3, 0), cmap='gist_rainbow'):
+                 etas: np.ndarray = np.linspace(0.1, 0.9, 5), xrange=(0, 5), yrange=(-3, 0), cmap='gist_rainbow', reverse_value=1):
     
     if isinstance(surface, np.ndarray):
         # print(np.max(pp), np.min(pp))
-        cs = ax.contourf(-surface[:, :, 2], surface[:, :, 0], surface[:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
+        cs = ax.contourf(surface[:, :, 2], -surface[:, :, 0], reverse_value * surface[:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
         xmax = surface[-1, -1, 2]
         ax.set_xlim(xrange)
     elif isinstance(surface, list) and len(surface) == 2:

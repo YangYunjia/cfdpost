@@ -588,155 +588,6 @@ class cfl3d():
         return field_data[j0:j1,0]
 
     @staticmethod
-    def readPlot2d(path: str, fname_grid='plot3d_grid.xyz', fname_sol='plot3d_sol.bin', binary=True, _double_precision=True):
-        '''
-        Plot3D Format grid and solution:
-        2D, Whole, Formatted, Single-Block Grid and Solution
-
-        https://www.grc.nasa.gov/www/wind/valid/plot3d.html
-
-        >>> xy, qq, mach, alfa, reyn = readPlot2d(path: str, 
-        >>>         fname_grid='plot3d_grid.xyz', fname_sol='plot3d_sol.bin', binary=True)
-
-        ### Input:
-        ```text
-        path:       folder that contains the output files
-        fname_grid: grid file name
-        fname_sol:  solution file name
-        binary:     binary or ASCII format
-        ```
-
-        ### Return:
-        ```text
-        xy:     ndarray [ni,nj,2], or None
-        qq:     ndarray [ni,nj,4], or None
-                non-dimensionalized RHO, RHO-U, RHO-V, E
-                q1: density by the reference density, rho
-                q*: velocity by the reference speed of sound, ar
-                q4: total energy per unit volume by rho*ar^2
-        mach:   freestream Mach number, = ur/ar
-                ur: reference velocity
-        alfa:   freestream angle-of-attack
-        reyn:   freestream Reynolds number, = rho*ar*Lr/miur
-                Lr: reference length
-                miur: reference viscosity
-        ```
-        '''
-        xy = None
-        qq = None
-        mach = 0.0
-        alfa = 0.0
-        reyn = 0.0
-
-        if _double_precision:
-            r_format = 8
-            s_format = 'd'
-        else:
-            r_format = 4
-            s_format = 'f'
-
-        if binary:
-
-            with open(os.path.join(path, fname_grid), 'rb') as f:
-
-                a,  = st.unpack('i', f.read(4))
-                ni, = st.unpack('i', f.read(4))
-                nj, = st.unpack('i', f.read(4))
-                xy  = np.zeros((ni,nj,2))
-
-                for v in range(2):
-                    for j in range(nj):
-                        for i in range(ni):
-                            xy[i,j,v], = st.unpack(s_format, f.read(r_format))
-
-            with open(os.path.join(path, fname_sol), 'rb') as f:
-
-                _,  = st.unpack('i', f.read(4))
-                ni, = st.unpack('i', f.read(4))
-                nj, = st.unpack('i', f.read(4))
-                qq  = np.zeros((ni,nj,4))
-
-                mach, = st.unpack(s_format, f.read(r_format))   # freestream Mach number
-                alfa, = st.unpack(s_format, f.read(r_format))   # freestream angle-of-attack
-                reyn, = st.unpack(s_format, f.read(r_format))   # freestream Reynolds number
-                time, = st.unpack(s_format, f.read(r_format))   # time
-
-                for q in range(4):
-                    for j in range(nj):
-                        for i in range(ni):
-                            qq[i,j,q], = st.unpack(s_format, f.read(r_format))
-
-
-        else:
-
-            with open(os.path.join(path, fname_grid), 'r') as f:
-                lines = f.readlines()
-
-                line = lines[1].split()
-                ni = int(line[0])
-                nj = int(line[1])
-                xy = np.zeros((ni,nj,2))
-
-                k_line = 2
-                k_item = 0
-                line   = lines[k_line].split()
-                len_line = len(line)
-                data = [float(a) for a in line]
-
-                for k in range(2):
-                    for j in range(nj):
-                        for i in range(ni):
-                            # Read next line
-                            if k_item >= len_line:
-                                k_line += 1
-                                k_item = 0
-                                line = lines[k_line].split()
-                                len_line = len(line)
-                                data = [float(a) for a in line]
-
-                            # Assign to xx, yy
-                            xy[i,j,k] = data[k_item]
-                            k_item += 1
-
-            with open(os.path.join(path, fname_sol), 'r') as f:
-                lines = f.readlines()
-
-                line = lines[1].split()
-                ni = int(line[0])
-                nj = int(line[1])
-                qq = np.zeros((ni,nj,4))
-
-                line = lines[2].split()
-                mach = float(line[0])   # freestream Mach number
-                alfa = float(line[1])   # freestream angle-of-attack
-                reyn = float(line[2])   # freestream Reynolds number
-                time = float(line[3])   # time
-
-                k_line = 3
-                k_item = 0
-                line   = lines[k_line].split()
-                len_line = len(line)
-                data = [float(a) for a in line]
-
-                for n in range(4):
-                    for j in range(nj):
-                        for i in range(ni):
-                            # Read next line
-                            if k_item >= len_line:
-                                k_line += 1
-                                k_item = 0
-                                line = lines[k_line].split()
-                                len_line = len(line)
-                                data = [float(a) for a in line]
-
-                            # Assign to qq
-                            qq[i,j,n] = data[k_item]
-                            k_item += 1
-
-
-        return xy, qq, mach, alfa, reyn
-
-    @staticmethod
     def readPlot3d(path: str, fname_grid='plot3d_grid.xyz', fname_sol='plot3d_sol.bin', binary=True, _double_precision=True):
         '''
         Plot3D Format grid and solution:
@@ -934,6 +785,115 @@ class cfl3d():
                     qq.append(copy.deepcopy(temp))
 
         return xyz, qq, mach, alfa, reyn
+
+    @staticmethod
+    def readPlot2d(path: str, fname_grid='plot3d_grid.xyz', fname_sol='plot3d_sol.bin', binary=True, _double_precision=True):
+        '''
+        Plot2D Format grid and solution:
+        2D, Whole, Unformatted, Multi-Block Grid and Solution
+
+        https://www.grc.nasa.gov/www/wind/valid/plot3d.html
+
+        >>> xyz, qq, mach, alfa, reyn = readPlot3d(path: str, 
+        >>>         fname_grid='plot3d_grid.xyz', fname_sol='plot3d_sol.bin', binary=True)
+
+        ### Input:
+        ```text
+        path:       folder that contains the output files
+        fname_grid: grid file name
+        fname_sol:  solution file name
+        binary:     binary or ASCII format
+        ```
+
+        ### Return:
+        ```text
+        xyz:    list of ndarray [ni,nj,nk,3], or None
+        qq:     list of ndarray [ni,nj,nk,5], or None
+                non-dimensionalized RHO, RHO-U, RHO-V, RHO-W, E
+                q1: density by the reference density, rho
+                q*: velocity by the reference speed of sound, ar
+                q5: total energy per unit volume by rho*ar^2
+        mach:   freestream Mach number, = ur/ar
+                ur: reference velocity
+        alfa:   freestream angle-of-attack
+        reyn:   freestream Reynolds number, = rho*ar*Lr/miur
+                Lr: reference length
+                miur: reference viscosity
+        ```
+        '''
+        xyz = None
+        qq = None
+        mach = 0.0
+        alfa = 0.0
+        reyn = 0.0
+
+        if _double_precision:
+            r_format = 8
+            s_format = 'd'
+        else:
+            r_format = 4
+            s_format = 'f'
+
+        if binary:
+
+            with open(os.path.join(path, fname_grid), 'rb') as f:
+
+                _, num_block, _ = st.unpack('iii', f.read(12))
+
+                xyz = []
+                ni = np.zeros(num_block, dtype=np.int32)
+                nj = np.zeros(num_block, dtype=np.int32)
+
+                _, = st.unpack('i', f.read(4))
+                for n in range(num_block):
+                    ni[n],nj[n], = st.unpack('ii', f.read(8))
+                _, = st.unpack('i', f.read(4))
+
+                for n in range(num_block):
+                    _, = st.unpack('i', f.read(4))
+                    temp = np.zeros((ni[n],nj[n],3))
+                    for d in range(3):
+                            for j in range(nj[n]):
+                                for i in range(ni[n]):
+                                    temp[i,j,d], = st.unpack(s_format, f.read(r_format))
+                    _, = st.unpack('i', f.read(4))
+                    xyz.append(copy.deepcopy(temp))
+                        
+            with open(os.path.join(path, fname_sol), 'rb') as f:
+
+                _, num_block, _ = st.unpack('iii', f.read(12))
+                qq = []
+                ni = np.zeros(num_block, dtype=np.int32)
+                nj = np.zeros(num_block, dtype=np.int32)
+
+                _, = st.unpack('i', f.read(4))
+                for n in range(num_block):
+                    ni[n],nj[n] = st.unpack('ii', f.read(8))
+                _, = st.unpack('i', f.read(4))
+
+                for n in range(num_block):
+
+                    temp = np.zeros((ni[n],nj[n],4))
+
+                    _, = st.unpack('i', f.read(4))
+                    mach, = st.unpack(s_format, f.read(r_format))   # freestream Mach number
+                    alfa, = st.unpack(s_format, f.read(r_format))   # freestream angle-of-attack
+                    reyn, = st.unpack(s_format, f.read(r_format))   # freestream Reynolds number
+                    time, = st.unpack(s_format, f.read(r_format))   # time
+                    _, = st.unpack('i', f.read(4))
+
+                    _, = st.unpack('i', f.read(4))
+                    for d in range(4):
+                        for j in range(nj[n]):
+                            for i in range(ni[n]):
+                                temp[i,j,d], = st.unpack(s_format, f.read(r_format))
+
+                    _, = st.unpack('i', f.read(4))
+
+                    qq.append(copy.deepcopy(temp))
+
+        return xyz, qq, mach, alfa, reyn
+
 
     @staticmethod
     def analysePlot3d(Mr: float, qq: np.ndarray, iVar: list, gamma_r=1.4):
@@ -1142,11 +1102,11 @@ class cfl3d():
 
                 _,num_block,_, = st.unpack('iii', f.read(12))
 
-                _, = st.unpack('i', f.read(4))
                 ni = np.zeros(num_block, dtype=np.int32)
                 nj = np.zeros(num_block, dtype=np.int32)
                 nk = np.zeros(num_block, dtype=np.int32)
-
+                
+                _, = st.unpack('i', f.read(4))
                 for n in range(num_block):
                     ni[n],nj[n],nk[n], = st.unpack('iii', f.read(12))
                     # print(ni[n], nj[n], nk[n])
