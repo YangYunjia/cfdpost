@@ -710,10 +710,10 @@ def plot_2d_wing_surface(ax: Axes, surface, contour=4, vrange=(None, None), text
         xmax = surface[-1, -1, 2]
         ax.set_xlim(xrange)
     elif isinstance(surface, list) and len(surface) == 2:
-        cs = ax.contourf(surface[0][:, :, 2], -surface[0][:, :, 0], surface[0][:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
-        cs = ax.contourf(-surface[1][:, :, 2], -surface[1][:, :, 0], surface[1][:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
+        cs = ax.contourf(surface[0][:, :, 2], -surface[0][:, :, 0], reverse_value * surface[0][:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
+        cs = ax.contourf(-surface[1][:, :, 2], -surface[1][:, :, 0], reverse_value * surface[1][:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
         xmax = surface[0][-1, -1, 2]
-        ax.set_xlim(-5, 5)
+        ax.set_xlim(xrange)
 
     for eta in etas:
         plt.plot([eta*xmax, eta*xmax], [-3, 0], ls='--', c='k')
@@ -778,8 +778,8 @@ def plot_top_view(ax: Axes, sa0, ar, tr):
     p1 = [0, 0]
     p2 = [0, 1]
     half_span = (0.5 * ar * 0.125 * ar * (1 + tr)**2)**0.5
-    p3 = [-half_span, half_span * np.tan(sa0 / DEGREE)]
-    p4 = [-half_span, half_span * np.tan(sa0 / DEGREE) + tr]
+    p3 = [half_span, -half_span * np.tan(sa0 / DEGREE)]
+    p4 = [half_span, -half_span * np.tan(sa0 / DEGREE) + tr]
 
     plt.plot(*points2line(p1, p2), c='k', ls='-')
     plt.plot(*points2line(p1, p3), c='k', ls='-')
