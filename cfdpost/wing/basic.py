@@ -10,6 +10,10 @@ from matplotlib import colormaps as cm
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 
+from cst_modeling.section import cst_foil
+from cst_modeling.basic import rotate
+
+from typing import List, Union
 
 _rot_metrix = np.array([[[1.0,0], [0,1.0]], [[0,-1.0], [1.0,0]]])
 DEGREE = 180 / math.pi
@@ -114,10 +118,42 @@ def get_force_1d(geom: np.ndarray, aoa: float, cp: np.ndarray, cf: np.ndarray=No
     return _xy_2_cl(dfp, aoa)
 
 #* auxilary functions
-def _swept_angle(chord, sa0, ar, tr):
+def _swept_angle(chord: float, sa0: float, ar: float, tr: float) -> float:
     return math.atan(math.tan(sa0 / DEGREE) + chord * 4 * (tr - 1) / (ar * (1 + tr))) * DEGREE
 
+def reconstruct_surface_frame(nx: int, cst_us: List[np.ndarray], cst_ls: List[np.ndarray], ts: List[float], 
+                              g: dict, tail:float = 0.004):
+    '''
+    reconstruct the control sectional airfoils
 
+    paras:
+    ===
+    - `nx`: number of points for each airfoil
+    - `cst_us`: `List` of `np.ndarray`, the upper surface CST coefficients from root to tip
+    - `cst_ls`: `List` of `np.ndarray`, the lower surface CST coefficients from root to tip
+    - `ts`: `List` of `float, the maximum relative thickness from root to tip
+    - `g`: `dict`
+        - tip_twist_angle
+        - tapper_ratio
+        - half_span
+        - swept_angle
+        - dihedral_angle
+    '''
+
+    xxs = []
+    yys = []
+    for idx, (cst_u, cst_l, t_) in enumerate(zip(cst_us, cst_ls, ts)):
+        xx, yu, yl, _, _ = cst_foil(nx, cst_u, cst_l, x=None, t=t_, tail=tail)
+        _xx = np.concatenate((xx[::-1], xx[1:]))
+        _yy = np.concatenate((yl[::-1], yu[1:]))
+        if idx == 1:
+            _xx, _yy, _, = rotate(_xx, _yy, np.zeros_like(_xx), angle=g['tip_twist_angle'], origin=[0.0, 0.0, 0.0], axis='Z')
+            _xx = g['tapper_ratio'] * _xx + g['half_span'] * np.tan(g['swept_angle']/180*np.pi)
+            _yy = g['tapper_ratio'] * _yy + g['half_span'] * np.tan(g['dihedral_angle']/180*np.pi)
+        xxs.append(_xx)
+        yys.append(_yy)
+
+    return xxs, yys
 
 class Wing():
     '''
@@ -141,7 +177,7 @@ class Wing():
     _format_geometry_indexs_short = ['AoA', 'Mach', 'swept_angle', 'dihedral_angle', 'aspect_ratio', 'tapper_ratio',  
                 'tip_twist_angle', 'tip2root_thickness_ratio']
     
-    def __init__(self, geometry: np.ndarray or dict = None, aoa: float = None) -> None:
+    def __init__(self, geometry: Union[np.ndarray, dict] = None, aoa: float = None) -> None:
 
         self.g = {}
         
@@ -189,7 +225,7 @@ class Wing():
         if 'ref_area' not in self.g.keys():
             self.g['ref_area'] = 0.125 * self.g['aspect_ratio'] * (1 + self.g['tapper_ratio'])**2
         if 'half_span' not in self.g.keys():
-            self.g['half_span'] = (0.5 * self.g['aspect_ratio'] * self.g['ref_area'])**0.5
+            self.g['half_span'] = 0.25 * self.g['aspect_ratio'] * (1 + self.g['tapper_ratio'])
         
         if 'aoa' in self.g.keys(): self.aoa = self.g['aoa']
         elif 'AoA' in self.g.keys(): self.aoa = self.g['AoA']
@@ -316,25 +352,10 @@ class Wing():
         reconstruct surface grid points (same to generate volume grid points in CFD simulations)
 
         '''
-        from cst_modeling.section import cst_foil
-        from cst_modeling.basic import rotate
 
-        xxs = []
-        yys = []
         troot = self.g['root_thickness']
-        cst_us = self.g['cstu']
-        cst_ls = self.g['cstl']
-        ts = [troot, (troot * self.g['tip2root_thickness_ratio'])]
-        for idx, (cst_u, cst_l, t_) in enumerate(zip(cst_us, cst_ls, ts)):
-            xx, yu, yl, _, _ = cst_foil(nx, cst_u, cst_l, x=None, t=t_, tail=tail)
-            _xx = np.concatenate((xx[::-1], xx[1:]))
-            _yy = np.concatenate((yl[::-1], yu[1:]))
-            if idx == 1:
-                _xx, _yy, _, = rotate(_xx, _yy, np.zeros_like(_xx), angle=self.g['tip_twist_angle'], origin=[0.0, 0.0, 0.0], axis='Z')
-                _xx = self.g['tapper_ratio'] * _xx + self.g['half_span'] * np.tan(self.g['swept_angle']/180*np.pi)
-                _yy = self.g['tapper_ratio'] * _yy + self.g['half_span'] * np.tan(self.g['dihedral_angle']/180*np.pi)
-            xxs.append(_xx)
-            yys.append(_yy)
+        xxs, yys = reconstruct_surface_frame(nx, self.g['cstu'], self.g['cstl'], 
+                                             [troot, (troot * self.g['tip2root_thickness_ratio'])], self.g)
 
         # for idx, ny in enumerate(nys):
         idx = 0
@@ -510,10 +531,10 @@ class Wing():
 
         return y, cl, cd, cmz
     
-    def sectional_chord_eta(self, eta: float or np.ndarray):
+    def sectional_chord_eta(self, eta: Union[float, np.ndarray]):
         return 1 - (1 - self.g['tapper_ratio']) * eta
 
-    def sectional_chord(self, y: float or np.ndarray):
+    def sectional_chord(self, y: Union[float, np.ndarray]):
         return self.sectional_chord_eta(y / self.g['half_span'])
     
     def section_lift_coefficient(self, y):
@@ -643,14 +664,14 @@ class KinkWing(Wing):
         else:
             self.aoa = aoa
 
-    def sectional_chord_eta(self, eta: float or np.ndarray):
+    def sectional_chord_eta(self, eta: Union[float, np.ndarray]):
         etak = self.g['kink']
         if eta < etak:
             return 1 - (1 - self.g['tapper_ratio_in']) * eta / etak
         else:
             return self.g['tapper_ratio_in'] * (1 - (1 - self.g['tapper_ratio_ou']) * (eta - etak) / (1 - etak))
 
-    def sectional_chord(self, y: float or np.ndarray):
+    def sectional_chord(self, y: Union[float, np.ndarray]):
         return self.sectional_chord_eta(y / self.g['half_span'])
 
 
@@ -769,20 +790,26 @@ def plot_2d_wing(surface, profile_surface=None, contour=4, vrange=(None, None), 
     else:
         plt.savefig(write_to_file)
 
-def points2line(p1, p2):
-    return ([p1[0], p2[0]], [p1[1], p2[1]])
+##################
+# functions to plot frame view
+# all functions below does not rely on Wing / KinkWing classes, for rapid responds
+##################
 
-def plot_top_view(ax: Axes, sa0, ar, tr):
+def points2line(p1, p2):
+    return tuple([[p1[i], p2[i]] for i in range(len(p1))])
+    # return ([p1[0], p2[0]], [p1[1], p2[1]])
+
+def plot_top_view(ax: Axes, sa0: float, ar: float, tr: float):
     p1 = [0, 0]
     p2 = [0, 1]
     half_span = (0.5 * ar * 0.125 * ar * (1 + tr)**2)**0.5
     p3 = [half_span, -half_span * np.tan(sa0 / DEGREE)]
     p4 = [half_span, -half_span * np.tan(sa0 / DEGREE) + tr]
 
-    plt.plot(*points2line(p1, p2), c='k', ls='-')
-    plt.plot(*points2line(p1, p3), c='k', ls='-')
-    plt.plot(*points2line(p3, p4), c='k', ls='-')
-    plt.plot(*points2line(p2, p4), c='k', ls='-')
+    ax.plot(*points2line(p1, p2), c='k', ls='-')
+    ax.plot(*points2line(p1, p3), c='k', ls='-')
+    ax.plot(*points2line(p3, p4), c='k', ls='-')
+    ax.plot(*points2line(p2, p4), c='k', ls='-')
 
     ax.set_aspect('equal')
 
@@ -798,16 +825,41 @@ def plot_top_view_kink(ax: Axes, sa0, etak, ar, trin, trout):
     p5 = [-half_span, half_span * np.tan(sa0 / DEGREE)]
     p6 = [-half_span, half_span * np.tan(sa0 / DEGREE) + trin * trout]
 
-    plt.plot(*points2line(p1, p2), c='k', ls='-')
-    plt.plot(*points2line(p1, p5), c='k', ls='-')
-    plt.plot(*points2line(p3, p4), c='k', ls='--')
-    plt.plot(*points2line(p2, p4), c='k', ls='-')
-    plt.plot(*points2line(p5, p6), c='k', ls='-')
-    plt.plot(*points2line(p4, p6), c='k', ls='-')
+    ax.plot(*points2line(p1, p2), c='k', ls='-')
+    ax.plot(*points2line(p1, p5), c='k', ls='-')
+    ax.plot(*points2line(p3, p4), c='k', ls='--')
+    ax.plot(*points2line(p2, p4), c='k', ls='-')
+    ax.plot(*points2line(p5, p6), c='k', ls='-')
+    ax.plot(*points2line(p4, p6), c='k', ls='-')
 
     ax.set_aspect('equal')
 
     return ax
+
+def plot_frame(ax: Axes, sa0, da0, ar, tr, tw, tcr, troot, cst_u, cst_l) -> Axes:
+    
+    '''
+    ax should be 3D
+    '''
+    hs = 0.5 * ar * (1 + tr)
+    g = {
+        'tip_twist_angle': tw,
+        'tapper_ratio': tr,
+        'half_span': hs,
+        'swept_angle': sa0,
+        'dihedral_angle': da0
+    }
+    nx = 51
+
+    xxs, yys = reconstruct_surface_frame(nx, [cst_u, cst_u], [cst_l, cst_l], [troot, troot * tcr], g)
+
+    ax.plot(xxs[0], [0 for _ in xxs[0]], yys[0] , c='k')
+    ax.plot(xxs[1], [hs for _ in xxs[0]], yys[1] , c='k')
+    for ix in [0, nx-1, -1]:
+        ax.plot(*points2line(p1=[xxs[0][ix], 0, yys[0][ix]], p2=[xxs[1][ix], hs, yys[1][ix]]) , c='k')
+
+    return ax
+
 
 if __name__ == '__main__':
 
