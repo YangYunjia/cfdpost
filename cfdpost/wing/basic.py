@@ -147,7 +147,7 @@ class Wing():
         
         if geometry is not None:
             if isinstance(geometry, dict):   self.read_geometry(geometry, aoa)
-            elif isinstance(geometry, np.ndarray): self.read_formatted_geometry(geometry, aoa)
+            elif isinstance(geometry, np.ndarray) or isinstance(geometry, list): self.read_formatted_geometry(geometry, aoa)
 
         self._init_blocks()
         self.var_list = []
@@ -305,9 +305,9 @@ class Wing():
         for idx, key in enumerate(index_keys):
             wing_param[key] = float(geometry[idx])
 
-        wing_param['root_thickness'] = geometry[i_foil_start]
-        wing_param['cstu'] = [geometry[i_foil_start+1:i_foil_start+11] for _ in range(2)]
-        wing_param['cstl'] = [geometry[i_foil_start+11:i_foil_start+21] for _ in range(2)]
+        wing_param['root_thickness'] = float(geometry[i_foil_start])
+        wing_param['cstu'] = [np.array(geometry[i_foil_start+1:i_foil_start+11]) for _ in range(2)]
+        wing_param['cstl'] = [np.array(geometry[i_foil_start+11:i_foil_start+21]) for _ in range(2)]
         
         self.read_geometry(wing_param, aoa)
 
@@ -324,8 +324,7 @@ class Wing():
         troot = self.g['root_thickness']
         cst_us = self.g['cstu']
         cst_ls = self.g['cstl']
-
-        ts = [troot, troot * self.g['tip2root_thickness_ratio']]
+        ts = [troot, (troot * self.g['tip2root_thickness_ratio'])]
         for idx, (cst_u, cst_l, t_) in enumerate(zip(cst_us, cst_ls, ts)):
             xx, yu, yl, _, _ = cst_foil(nx, cst_u, cst_l, x=None, t=t_, tail=tail)
             _xx = np.concatenate((xx[::-1], xx[1:]))
@@ -670,7 +669,6 @@ def interpolate_section(surface, y=None, eta=None, norm=False):
     for i in range(surface.shape[0] - 1):
         # print(blk[i, 0, 0, 0:3])
         if surface[i, 0, 2] <= y and surface[i+1, 0, 2] > y:
-            print(i, y)
             sectional = surface[i, :] + (surface[i+1, :] - surface[i, :]) * (y - surface[i, 0, 2]) / (surface[i+1, 0, 2] - surface[i, 0, 2])
             break
     else:
@@ -745,7 +743,7 @@ def plot_2d_wing(surface, profile_surface=None, contour=4, vrange=(None, None), 
     if profile_surface is None:
         profile_surface = surface
 
-    fig = plt.figure(figsize=(14, 10))
+    fig = plt.figure(figsize=(14, 10), dpi=50)
     gs = GridSpec(2, 5, height_ratios=[3, 1])
     # print(blk.shape)
     # print(upper_surface.shape)
