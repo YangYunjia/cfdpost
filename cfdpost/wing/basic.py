@@ -567,11 +567,11 @@ class Wing():
             _colors[:, :, 3] = alpha
             return _colors
 
-        colors = color_map(blk[:, :, 0, contour], 'gist_rainbow', alpha=0.2)
+        colors = color_map(blk[:, :, contour], 'gist_rainbow', alpha=0.2)
 
-        ax.plot_surface(blk[:, :, 0, 0], blk[:, :, 0, 2], blk[:, :, 0, 1], facecolors=colors, edgecolor='none', rstride=1, cstride=3, shade=True)
+        ax.plot_surface(blk[:, :, 0], blk[:, :, 2], blk[:, :, 1], facecolors=colors, edgecolor='none', rstride=1, cstride=3, shade=True)
         for i in range(0, 60, 10):
-            ax.plot(blk[i, :, 0, 0], blk[i, :, 0, 2], -blk[i, :, 0, 9] / 5 + 0.3 + blk[i, 0, 0, 1], c='k')
+            ax.plot(blk[i, :, 0], blk[i, :, 2], -blk[i, :, 9] / 5 + 0.3 + blk[i, 0, 1], c='k')
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
         ax.set_zlabel('Z')
