@@ -9,6 +9,7 @@ from matplotlib import pyplot as plt
 from matplotlib import colormaps as cm
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
+from matplotlib.gridspec import GridSpec
 
 from cst_modeling.section import cst_foil
 from cst_modeling.basic import rotate
@@ -610,6 +611,17 @@ class Wing():
         
         plot_2d_wing(surfaces[0], surfaces[1], contour, vrange, text, reverse_y, etas, write_to_file)
 
+    def _plot_2d(self, fig: Figure, contour_option, contour=4, vrange=(None, None), text: dict = {}, reverse_y=1,
+                    etas : np.ndarray = np.linspace(0.1, 0.9, 5)):
+        
+        blk = self.surface_blocks[0]
+        surfaces = []
+        for op in contour_option:
+            if op in ['full']:  surfaces.append(blk)
+            elif op in ['upper']:   surfaces.append(blk[:, self.leading_edge_index:])
+        
+        _plot_2d_wing(fig, surfaces[0], surfaces[1], contour, vrange, text, reverse_y, etas)
+
     #* =============================
     # below are functions for lifting-line theory
 
@@ -752,6 +764,18 @@ def plot_2d_wing_surface(ax: Axes, surface, contour=4, vrange=(None, None), text
 
 def plot_2d_wing(surface, profile_surface=None, contour=4, vrange=(None, None), text: dict = {}, reverse_y=1,
                  etas: np.ndarray = np.linspace(0.1, 0.9, 5), write_to_file = None):
+    
+    fig = plt.figure(figsize=(14, 10), dpi=100)
+    _plot_2d_wing(fig, surface, profile_surface, contour, vrange, text, reverse_y, etas)
+    
+    plt.tight_layout()
+    if write_to_file is None:
+        plt.show()
+    else:
+        plt.savefig(write_to_file)
+
+def _plot_2d_wing(fig: Figure, surface, profile_surface=None, contour=4, vrange=(None, None), text: dict = {}, reverse_y=1,
+                 etas: np.ndarray = np.linspace(0.1, 0.9, 5), write_to_file = None):
     '''
     plot the wing upper surface and several intersections of the wing
 
@@ -760,11 +784,9 @@ def plot_2d_wing(surface, profile_surface=None, contour=4, vrange=(None, None), 
     - `surface`:    the
     
     '''
-    from matplotlib.gridspec import GridSpec
     if profile_surface is None:
         profile_surface = surface
 
-    fig = plt.figure(figsize=(14, 10), dpi=50)
     gs = GridSpec(2, 5, height_ratios=[3, 1])
     # print(blk.shape)
     # print(upper_surface.shape)
@@ -784,11 +806,7 @@ def plot_2d_wing(surface, profile_surface=None, contour=4, vrange=(None, None), 
         for idx in range(len(profile_surface)):
             sec_p = interpolate_section(profile_surface[idx], eta=etas[i])
             ax.plot(sec_p[:, 0], reverse_y * sec_p[:, contour], c=colors[idx], ls=lss[idx])
-    plt.tight_layout()
-    if write_to_file is None:
-        plt.show()
-    else:
-        plt.savefig(write_to_file)
+
 
 ##################
 # functions to plot frame view
