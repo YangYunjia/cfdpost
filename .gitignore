@@ -8,6 +8,6 @@ Calculation/
 *.txt
 *.ini
 
-example/test/
+example/
 
 test*
