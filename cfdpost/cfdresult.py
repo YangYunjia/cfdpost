@@ -588,14 +588,14 @@ class cfl3d():
         return field_data[j0:j1,0]
 
     @staticmethod
-    def readPlot3d(path: str, fname_grid='plot3d_grid.xyz', fname_sol='plot3d_sol.bin', binary=True, _double_precision=True):
+    def readPlot3d(path: str, fname_grid='plot3d_grid.xyz', fname_sol='plot3d_sol.bin', binary=True, _double_precision=False, version='6.8'):
         '''
         Plot3D Format grid and solution:
         3D, Whole, Unformatted, Multi-Block Grid and Solution
 
         https://www.grc.nasa.gov/www/wind/valid/plot3d.html
 
-        >>> xyz, qq, mach, alfa, reyn = readPlot3d(path: str, 
+        >>> xyz, qq = readPlot3d(path: str, 
         >>>         fname_grid='plot3d_grid.xyz', fname_sol='plot3d_sol.bin', binary=True)
 
         ### Input:
@@ -604,22 +604,22 @@ class cfl3d():
         fname_grid: grid file name
         fname_sol:  solution file name
         binary:     binary or ASCII format
+        version:    6.7 or 6.8
         ```
 
         ### Return:
         ```text
         xyz:    list of ndarray [ni,nj,nk,3], or None
+        (for 6.7)
         qq:     list of ndarray [ni,nj,nk,5], or None
                 non-dimensionalized RHO, RHO-U, RHO-V, RHO-W, E
                 q1: density by the reference density, rho
                 q*: velocity by the reference speed of sound, ar
                 q5: total energy per unit volume by rho*ar^2
-        mach:   freestream Mach number, = ur/ar
-                ur: reference velocity
-        alfa:   freestream angle-of-attack
-        reyn:   freestream Reynolds number, = rho*ar*Lr/miur
-                Lr: reference length
-                miur: reference viscosity
+        (for 6.8)
+        qq:     list of ndarray [ni,nj,nk,21]
+                RHO U_X U_Y U_Z P T MUL MUT OMEGA K M VORT_X VORT_Y VORT_Z Q GRAD_RHO GRAD_P FD LRANS LLES XBLEND
+
         ```
         '''
         xyz = None
@@ -635,59 +635,83 @@ class cfl3d():
             r_format = 4
             s_format = 'f'
 
+        if version == '6.8':
+            is_new_version = True
+        elif version == '6.7':
+            is_new_version = False
+        else:
+            raise Exception('only support version 6.7 & 6.8')
+
         if binary:
 
             with open(os.path.join(path, fname_grid), 'rb') as f:
 
-                num_block, = st.unpack('i', f.read(4))
+                _, num_block, _ = st.unpack('iii', f.read(12))
 
                 xyz = []
-                ni = np.zeros(num_block)
-                nj = np.zeros(num_block)
-                nk = np.zeros(num_block)
+                ni = np.zeros(num_block, dtype=np.int32)
+                nj = np.zeros(num_block, dtype=np.int32)
+                nk = np.zeros(num_block, dtype=np.int32)
+
+                _, = st.unpack('i', f.read(4))  # read the data block size (bit in INT)
+                for n in range(num_block):
+                    ni[n],nj[n],nk[n], = st.unpack('iii', f.read(12))
+                _, = st.unpack('i', f.read(4))
 
                 for n in range(num_block):
-                    ni[n],nj[n],nk[n], = st.unpack('iii', f.read(4))
-
-                for n in range(num_block):
-                    temp = np.zeros((ni[n],nj[n],nk[n],3))
-                    for d in range(3):
+                    _, = st.unpack('i', f.read(4))
+                    # there are FOUR dimensions for plot3d 3D output (x, y, z, iblank) - ref. Manual p.71
+                    temp = np.zeros((ni[n],nj[n],nk[n],4))
+                    for d in range(4):
                         for k in range(nk[n]):
                             for j in range(nj[n]):
                                 for i in range(ni[n]):
                                     temp[i,j,k,d], = st.unpack(s_format, f.read(r_format))
 
+                    _, = st.unpack('i', f.read(4))
                     xyz.append(copy.deepcopy(temp))
 
-            with open(os.path.join(path, fname_sol), 'r') as f:
+            with open(os.path.join(path, fname_sol), 'rb') as f:
                 
-                num_block, = st.unpack('i', f.read(4))
+                _, num_block, _, = st.unpack('iii', f.read(12))
                 qq = []
-                ni = np.zeros(num_block)
-                nj = np.zeros(num_block)
-                nk = np.zeros(num_block)
+                ni = np.zeros(num_block, dtype=np.int32)
+                nj = np.zeros(num_block, dtype=np.int32)
+                nk = np.zeros(num_block, dtype=np.int32)
+                nv = 5 * np.ones(num_block, dtype=np.int32)    # number of variables, default for 6.7 is 5
+
+                _, = st.unpack('i', f.read(4))
+                for n in range(num_block):
+                    if is_new_version: ni[n],nj[n],nk[n],nv[n] = st.unpack('iiii', f.read(16))
+                    else:              ni[n],nj[n],nk[n]       = st.unpack('iii',  f.read(12))
+                _, = st.unpack('i', f.read(4))
 
                 for n in range(num_block):
-                    ni[n],nj[n],nk[n], = st.unpack('iii', f.read(4))
+                    # 6.7 there are FIVE dimensions for plot3d 3D output (rho, rhou, rhov, rhow, rhoe) - ref. Manual p.72
+                    # 6.8 there are 21 variables: RHO U_X U_Y U_Z P T MUL MUT OMEGA K M VORT_X VORT_Y VORT_Z Q GRAD_RHO GRAD_P FD LRANS LLES XBLEND
+                    temp = np.zeros((ni[n],nj[n],nk[n],nv[n]))
 
-                for n in range(num_block):
-                    temp = np.zeros((ni[n],nj[n],nk[n],5))
+                    if not is_new_version:
+                        _, = st.unpack('i', f.read(4))
+                        mach, = st.unpack(s_format, f.read(r_format))   # freestream Mach number
+                        alfa, = st.unpack(s_format, f.read(r_format))   # freestream angle-of-attack
+                        reyn, = st.unpack(s_format, f.read(r_format))   # freestream Reynolds number
+                        time, = st.unpack(s_format, f.read(r_format))   # time
+                        _, = st.unpack('i', f.read(4))
 
-                    mach, = st.unpack(s_format, f.read(r_format))   # freestream Mach number
-                    alfa, = st.unpack(s_format, f.read(r_format))   # freestream angle-of-attack
-                    reyn, = st.unpack(s_format, f.read(r_format))   # freestream Reynolds number
-                    time, = st.unpack(s_format, f.read(r_format))   # time
-
-                    for d in range(5):
+                    _, = st.unpack('i', f.read(4))
+                    for d in range(nv[n]):
                         for k in range(nk[n]):
                             for j in range(nj[n]):
                                 for i in range(ni[n]):
                                     temp[i,j,k,d], = st.unpack(s_format, f.read(r_format))
+                    _, = st.unpack('i', f.read(4))
 
                     qq.append(copy.deepcopy(temp))
 
 
         else:
+            assert not is_new_version, "ascii not implenmented for version 6.8"
 
             with open(os.path.join(path, fname_grid), 'r') as f:
                 xyz = []
@@ -784,7 +808,7 @@ class cfl3d():
 
                     qq.append(copy.deepcopy(temp))
 
-        return xyz, qq, mach, alfa, reyn
+        return xyz, qq
 
     @staticmethod
     def readPlot2d(path: str, fname_grid='plot3d_grid.xyz', fname_sol='plot3d_sol.bin', binary=True, _double_precision=True):
@@ -1051,9 +1075,11 @@ class cfl3d():
         return var
 
     @staticmethod
-    def readsurf2d(path: str, fname_grid='surf.g', fname_sol='surf.q', fname_nam='surf.nam', binary=True, _double_precision=False):
+    def readsurf2d(path: str, fname_grid='surf.g', fname_sol='surf.q', binary=True, _double_precision=False):
         '''
         Plot3D Format grid and solution for surface data (for CFL3D v6.8):
+
+        CFL3D v6.8 change original `cfl3d.prt` to `surf.g` and `surf.q` for surface value output
 
         >>> xyz, qq = readPlot3d(path: str, 
         >>>         fname_grid='surf.g', fname_sol='surf.q', binary=True)
@@ -1069,11 +1095,8 @@ class cfl3d():
         ### Return:
         ```text
         xyz:    list of ndarray [ni,nj,nk,3], or None
-        qq:     list of ndarray [ni,nj,nk,5], or None
-                non-dimensionalized RHO, RHO-U, RHO-V, RHO-W, E
-                q1: density by the reference density, rho
-                q*: velocity by the reference speed of sound, ar
-                q5: total energy per unit volume by rho*ar^2
+        qq:     list of ndarray [ni,nj,nk,14], or None
+                U_X U_Y U_Z P T M CP MUT DIS CH YPLUS CF_X CF_Y CF_Z
         ```
         '''
         if _double_precision:
@@ -1085,8 +1108,7 @@ class cfl3d():
         
         xy = []
         qq = []
-        var_list = []
-
+        # var_list = []
         # if fname_nam is not None:
         #     with open(os.path.join(path, fname_nam), 'r') as f:
         #         lines = f.readlines()
@@ -1109,20 +1131,16 @@ class cfl3d():
                 _, = st.unpack('i', f.read(4))
                 for n in range(num_block):
                     ni[n],nj[n],nk[n], = st.unpack('iii', f.read(12))
-                    # print(ni[n], nj[n], nk[n])
                 _, = st.unpack('i', f.read(4))
 
                 for n in range(num_block):
                     _, = st.unpack('i', f.read(4))
                     temp  = np.zeros((ni[n],nj[n],nk[n],3))
-                    # print(temp.shape)
                     for v in range(3):
                         for k in range(nk[n]):
                             for j in range(nj[n]):
                                 for i in range(ni[n]):
                                     temp[i,j,k,v], = st.unpack(s_format, f.read(r_format))
-                    # print(temp.shape, temp[:, 0, 0, 2])
-                    # print(temp.shape, temp[:, -1, -1, 2])
                     xy.append(copy.deepcopy(temp))
                     _, = st.unpack('i', f.read(4))
 
@@ -1143,11 +1161,6 @@ class cfl3d():
                 for n in range(num_block):
                     _, = st.unpack('i', f.read(4))
                     temp = np.zeros((ni[n],nj[n],nk[n],nv[n]))
-
-                    # mach, = st.unpack(s_format, f.read(r_format))   # freestream Mach number
-                    # alfa, = st.unpack(s_format, f.read(r_format))   # freestream angle-of-attack
-                    # reyn, = st.unpack(s_format, f.read(r_format))   # freestream Reynolds number
-                    # time, = st.unpack(s_format, f.read(r_format))   # time
 
                     for d in range(nv[n]):
                         for k in range(nk[n]):

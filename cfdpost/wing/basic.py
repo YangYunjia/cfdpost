@@ -645,25 +645,32 @@ def plot_compare_2d_wing(wg1: Wing, wg2: Wing, contour=4, vrange=(None, None), r
 
 def plot_2d_wing_surface(ax: Axes, surface, contour=4, vrange=(None, None), text: dict = {},
                  etas: np.ndarray = np.linspace(0.1, 0.9, 5), xrange=(0, 5), yrange=(-3, 0), cmap='gist_rainbow', reverse_value=1):
-    
+
+    # single wing plot -> plot at right half wing
     if isinstance(surface, np.ndarray):
         # print(np.max(pp), np.min(pp))
         cs = ax.contourf(surface[:, :, 2], -surface[:, :, 0], reverse_value * surface[:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
         xmax = surface[-1, -1, 2]
         ax.set_xlim(xrange)
+    # double wing plot -> for comparison
     elif isinstance(surface, list) and len(surface) == 2:
         cs = ax.contourf(surface[0][:, :, 2], -surface[0][:, :, 0], reverse_value * surface[0][:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
         cs = ax.contourf(-surface[1][:, :, 2], -surface[1][:, :, 0], reverse_value * surface[1][:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
         xmax = surface[0][-1, -1, 2]
         ax.set_xlim((-xrange[1], xrange[1]))
 
+    # plot slice line to indicate the section positions
     for eta in etas:
-        plt.plot([eta*xmax, eta*xmax], [-3, 0], ls='--', c='k')
+        ax.plot([eta*xmax, eta*xmax], [-3, 0], ls='--', c='k')
 
     ax.set_ylim(yrange)
     ax.set_aspect('equal')
-    # cbr = fig.colorbar(cs, fraction=0.01, pad=0.01)
+
+    # plot arrow to indicate freestream
+    ax.arrow(2, 0, 0, -0.4, color='k', head_width=0.05, head_length=0.1)
+    ax.text(2.1, -0.3, 'freestream')
     
+    # plot the text if given 
     text_x = 3.5
     text_y = -0.1
     for key in text.keys():
@@ -699,15 +706,13 @@ def _plot_2d_wing(fig: Figure, surface, profile_surface=None, contour=4, vrange=
         profile_surface = surface
 
     gs = GridSpec(2, 5, height_ratios=[3, 1])
-    # print(blk.shape)
-    # print(upper_surface.shape)
+    
+    # plot the upper surface contour field
     ax = fig.add_subplot(gs[0, :])
-
     ax, cs = plot_2d_wing_surface(ax, surface, contour, vrange, text, etas)
+    cbr = fig.colorbar(cs, fraction=0.01, pad=0.01)
 
-    # plt.show()
-
-    # plt.figure(figsize=(2, 10))
+    # plot the section distributions
     colors = ['k', 'r', 'b']
     lss = ['-', '--', '-.']
     for i in range(5):
@@ -716,7 +721,9 @@ def _plot_2d_wing(fig: Figure, surface, profile_surface=None, contour=4, vrange=
         ax = fig.add_subplot(gs[1, i])   
         for idx in range(len(profile_surface)):
             sec_p = interpolate_section(profile_surface[idx], eta=etas[i])
-            ax.plot(sec_p[:, 0], reverse_y * sec_p[:, contour], c=colors[idx], ls=lss[idx])
+            ax.plot(sec_p[:, 0], sec_p[:, contour], c=colors[idx], ls=lss[idx])
+            if reverse_y < 0:
+                ax.invert_yaxis()
 
 
 ##################
@@ -782,10 +789,19 @@ def plot_frame(ax: Axes, sa0, da0, ar, tr, tw, tcr, troot, cst_u, cst_l) -> Axes
 
     xxs, yys = reconstruct_surface_frame(nx, [cst_u, cst_u], [cst_l, cst_l], [troot, troot * tcr], g)
 
+    # tip and root section airfoil
     ax.plot(xxs[0], [0 for _ in xxs[0]], yys[0] , c='k')
     ax.plot(xxs[1], [hs for _ in xxs[0]], yys[1] , c='k')
+
+    # leading and tailing edges
     for ix in [0, nx-1, -1]:
         ax.plot(*points2line(p1=[xxs[0][ix], 0, yys[0][ix]], p2=[xxs[1][ix], hs, yys[1][ix]]) , c='k')
+
+    # arrow to show freestream direction
+    ax.quiver(0, 2, 0, 0.4, 0, 0,
+            color='k', arrow_length_ratio=0.2, lw=1,
+            pivot='tail', normalize=True)
+    ax.text(0, 2, 0, 'freestream')
 
     return ax
 
