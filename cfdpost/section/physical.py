@@ -379,7 +379,8 @@ class PhysicalSec(PhysicalSecWall):
         Ma_ref = np.linspace(0.0, M_max, n_ref)
         Cp_ref = PhysicalSec.IsentropicCp(Ma_ref, Minf)
         f   = interp1d(Cp_ref, Ma_ref, kind='cubic')
-        Cp_ = Cp.copy()
+        # Cp_ = Cp.copy()
+        Cp_ = copy.deepcopy(Cp)
         Cp_ = np.clip(Cp_, Cp_ref[-1], Cp_ref[0])
         return f(Cp_)
 

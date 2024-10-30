@@ -15,108 +15,7 @@ from cst_modeling.section import cst_foil
 from cst_modeling.basic import rotate
 
 from typing import List, Union
-
-_rot_metrix = np.array([[[1.0,0], [0,1.0]], [[0,-1.0], [1.0,0]]])
-DEGREE = 180 / math.pi
-
-#* function to rotate x-y to aoa
-
-def _aoa_rot(aoa: float):
-    '''
-    aoa is in size (B, )
-    
-    '''
-    aoa = aoa * math.pi / 180
-    return np.array([math.cos(aoa), -math.sin(aoa)])
-
-def _xy_2_cl(dfp: np.ndarray, aoa: float):
-    '''
-    transfer fx, fy to CD, CL
-
-    param:
-    dfp:    (Fx, Fy), np.ndarray with size (2,)
-    aoa:    angle of attack, float
-
-    return:
-    ===
-    np.ndarray: (CD, CL)
-    '''
-    # print(dfp.size(), _rot_metrix.size(), _aoa_rot(aoa).size())
-    return np.einsum('p,prs,s->r', dfp, _rot_metrix, _aoa_rot(aoa))
-
-
-#* function to extract pressure force from 1-d pressure profile
-
-def get_dxyforce_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None):
-    '''
-    integrate the force on each surface grid cell
-
-    ### retrun
-    np.ndarray (N-1, 2) 
-        (dFx, dFy)
-    
-    '''
-
-    dfp_n  = (0.5 * (cp[1:] + cp[:-1])).reshape((1, -1))
-    if cf is None:
-        dfv_t  = np.zeros_like(dfp_n)
-    else:
-        dfv_t = (0.5 * (cf[1:] + cf[:-1])).reshape((1, -1))
-
-    dr     = (geom[1:] - geom[:-1])
-
-    return np.einsum('lj,lpk,jk->jp', np.concatenate((dfv_t, -dfp_n), axis=0), _rot_metrix, dr)
-
-
-def get_xyforce_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None):
-    '''
-    integrate the force on x and y direction
-
-    param:
-    ===
-    `geom`:    The geometry (x, y), shape: (2, N)
-    
-    `profile`: The pressure profile, shape: (N, ); should be non_dimensional pressure profile by freestream condtion
-
-        Cp = (p - p_inf) / 0.5 * rho * U^2
-        Cf = tau / 0.5 * rho * U^2
-
-    return:
-    ===
-    np.ndarray: (Fx, Fy)
-    '''
-
-    dr_tail = geom[0] - geom[-1]
-    dfp_n_tail = np.array([0., -0.5 * (cp[0] + cp[-1])])
-    
-    return np.sum(get_dxyforce_1d(geom, cp, cf), axis=0) + np.einsum('l,lpk,k', dfp_n_tail, _rot_metrix, dr_tail)
-
-def get_moment_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None, ref_point: np.ndarray=np.array([0.25, 0])):
-
-    dxyforce = get_dxyforce_1d(geom, cp, cf)
-    r = 0.5 * (geom[:-1] + geom[1:])
-    return np.sum(dxyforce[:, 1] * (r[:, 0] - ref_point[0]) - dxyforce[:, 0] * (r[:, 1] - ref_point[1]))
-
-def get_force_1d(geom: np.ndarray, aoa: float, cp: np.ndarray, cf: np.ndarray=None):
-    '''
-    integrate the lift and drag
-
-    param:
-    ===
-    `geom`:    The geometry (x, y), shape: (2, N)
-    
-    `profile`: The pressure profile, shape: (N, ); should be non_dimensional pressure profile by freestream condtion
-
-        Cp = (p - p_inf) / 0.5 * rho * U^2
-    
-    `aoa`:  angle of attack
-
-    return:
-    ===
-    np.ndarray: (CD, CL)
-    '''
-    dfp = get_xyforce_1d(geom, cp, cf)
-    return _xy_2_cl(dfp, aoa)
+from utils import DEGREE, _xy_2_cl, get_force_1d, get_moment_1d
 
 #* auxilary functions
 def _swept_angle(chord: float, sa0: float, ar: float, tr: float) -> float:
@@ -316,6 +215,12 @@ class Wing():
                 blk[:, :, 9]      = data[0]
                 blk[:, :, 16]     = data[2] / (1, 250)[isnormed] # cfz
                 blk[:, :, 17]     = data[1] / (1, 200)[isnormed] # cftau
+            # fsw dataset format
+            elif data.shape[0] == 4:
+                blk[:, :, 9]      = data[0]
+                blk[:, :, 16]     = data[1] / (1, 250)[isnormed] # cfz
+                blk[:, :, 17]     = data[2] / (1, 200)[isnormed] # cftau
+                blk[:, :, 18]     = data[3] # cfnor
 
     def read_formatted_geometry(self, geometry: np.ndarray, aoa: float = None, ftype: float = 0):
         '''
@@ -611,7 +516,7 @@ class Wing():
         
         plot_2d_wing(surfaces[0], surfaces[1], contour, vrange, text, reverse_y, etas, write_to_file)
 
-    def _plot_2d(self, fig: Figure, contour_option, contour=4, vrange=(None, None), text: dict = {}, reverse_y=1,
+    def _plot_2d(self, fig: Figure, contour_option: List[str], contour=4, vrange=(None, None), text: dict = {}, reverse_y=1,
                     etas : np.ndarray = np.linspace(0.1, 0.9, 5)):
         
         blk = self.surface_blocks[0]
@@ -717,6 +622,12 @@ def interpolate_section(surface, y=None, eta=None, norm=False):
 
 def plot_compare_2d_wing(wg1: Wing, wg2: Wing, contour=4, vrange=(None, None), reverse_y=1, 
                          etas: np.ndarray = np.linspace(0.1, 0.9, 5), write_to_file = None):
+    
+    '''
+    - `wg1`:    ground truth
+    - `wg2`:    reconstruction
+    
+    '''
 
     surfaces = [ww.surface_blocks[0][:, ww.leading_edge_index:] for ww in [wg1, wg2]]
     profiles = [ww.surface_blocks[0] for ww in [wg1, wg2]]
@@ -744,7 +655,7 @@ def plot_2d_wing_surface(ax: Axes, surface, contour=4, vrange=(None, None), text
         cs = ax.contourf(surface[0][:, :, 2], -surface[0][:, :, 0], reverse_value * surface[0][:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
         cs = ax.contourf(-surface[1][:, :, 2], -surface[1][:, :, 0], reverse_value * surface[1][:, :, contour], 200, cmap=cmap, vmin=vrange[0], vmax=vrange[1])
         xmax = surface[0][-1, -1, 2]
-        ax.set_xlim(xrange)
+        ax.set_xlim((-xrange[1], xrange[1]))
 
     for eta in etas:
         plt.plot([eta*xmax, eta*xmax], [-3, 0], ls='--', c='k')
