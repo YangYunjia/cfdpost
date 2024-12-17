@@ -95,7 +95,7 @@ def get_xyforce_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None) -> np.
 
     param:
     ===
-    `geom`:    The geometry (x, y), shape: (2, N)
+    `geom`:    The geometry (x, y), shape: (N, 2)
     
     `profile`: The pressure profile, shape: (N, ); should be non_dimensional pressure profile by freestream condtion
 
@@ -124,7 +124,7 @@ def get_force_1d(geom: np.ndarray, aoa: float, cp: np.ndarray, cf: np.ndarray=No
 
     param:
     ===
-    `geom`:    The geometry (x, y), shape: (2, N)
+    `geom`:    The geometry (x, y), shape: (N, 2)
     
     `profile`: The pressure profile, shape: (N, ); should be non_dimensional pressure profile by freestream condtion
 

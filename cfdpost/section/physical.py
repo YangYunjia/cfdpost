@@ -1306,7 +1306,7 @@ class PhysicalSec(PhysicalSecWall):
         self.locate_sep()
         self.locate_geo()
         i_1 = self.locate_shock(info=info)
-        self.locate_BL(i_1)
+        # self.locate_BL(i_1)
         self.aux_features()
 
     #!: output features

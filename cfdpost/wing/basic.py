@@ -15,7 +15,7 @@ from cst_modeling.section import cst_foil
 from cst_modeling.basic import rotate
 
 from typing import List, Union
-from utils import DEGREE, _xy_2_cl, get_force_1d, get_moment_1d
+from cfdpost.utils import DEGREE, _xy_2_cl, get_force_1d, get_moment_1d
 
 #* auxilary functions
 def _swept_angle(chord: float, sa0: float, ar: float, tr: float) -> float:

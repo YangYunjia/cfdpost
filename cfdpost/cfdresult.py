@@ -22,7 +22,7 @@ class cfl3d():
         pass
 
     @staticmethod
-    def readCoef(path: str, n=100, output_error=False):
+    def readCoef(path: str, n=100, output_error=False, conv_hold: float = 0.01):
         '''
         Read clcd_wall.dat or clcd.dat of the CFL3D outputs.
 
@@ -94,7 +94,7 @@ class cfl3d():
         if k < n*0.5:
             converge = False
 
-        elif np.max(CLs)-np.min(CLs) < max(0.01, 0.01*CL_):
+        elif np.max(CLs)-np.min(CLs) < max(conv_hold, conv_hold*CL_):
             CL = CL_
             CD = np.mean(CDs)
             Cm = np.mean(Cms)
@@ -460,7 +460,7 @@ class cfl3d():
 
         ### Return:
         ```text
-        succeed (bool), (field: X,Y,U,V,P,T,Ma,Cp,vi), (foil: x, y, P, T, Cf), (freestream: mach, alph, beta, reue, tinf, time)
+        succeed (bool), (field: X,Y,U,V,P,T,Ma,Cp,vi), (foil: x, y, Cp, T, Cf), (freestream: mach, alph, beta, reue, tinf, time)
         ```
         
         ### Raise:
