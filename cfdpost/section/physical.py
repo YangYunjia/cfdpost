@@ -293,13 +293,19 @@ class PhysicalSec(PhysicalSecWall):
                       'Re':     Re,
                       'Tinf':   Tinf,
                       'gamma':  gamma}    # the ratio of chord to find suction peak near leading edge on lower surface
-
-    def setlimdata(self, x, y, Cp, dudy):
+        
+        self.Tw = None
+    
+    def setlimdata(self, x, y, Cp, dudy = None):
         self.x = copy.deepcopy(x)
         self.y = copy.deepcopy(y)
         self.Cp = copy.deepcopy(Cp)
         self.Mw = self.Cp2Mw()
-        self.dudy = copy.deepcopy(dudy)
+        
+        if dudy is not None:
+            self.dudy = copy.deepcopy(dudy)
+        else:
+            self.dudy = None
 
         iLE = np.argmin(self.x)
         self.iLE = iLE
@@ -312,7 +318,7 @@ class PhysicalSec(PhysicalSecWall):
 
         x_  = np.append(self.x[iLE:0:-1], self.x[0])
         y_  = np.append(self.y[iLE:0:-1], self.y[0])
-        gu  = interp1d(self.x[iLE:], self.y [iLE:], kind='cubic')
+        gu  = interp1d(self.x[iLE:],  self.y[iLE:], kind='cubic')
         gl  = interp1d(x_, y_, kind='cubic')
         self.xx = np.arange(0.0, 1.0, 0.001)
         self.yu = gu(self.xx)
@@ -1178,8 +1184,7 @@ class PhysicalSec(PhysicalSecWall):
         '''
         Calculate auxiliary features based on basic, geo, and shock features.
 
-        ### Get value of: Length, lSW, DCp, Err, DMp, FSp, kaf, 
-        ### CLU, CLL, CLw, Cdw, CLl, Cdl
+        ### Get value of: Lengths, lSW, DCp, Err, DMp, FSp
         '''
         X  = self.x
         Y  = self.y
@@ -1240,6 +1245,20 @@ class PhysicalSec(PhysicalSecWall):
         self.xf_dict['Err'][1] = abs(Err)*cosA
         self.xf_dict['DMp'][1] = DMp
         self.xf_dict['FSp'][1] = FSp
+    
+    def aux_features_BL(self):
+        '''
+        get secondary features from BL
+        
+        ### Get value of: kaf, CLU, CLL, CLw, Cdw, CLl, Cdl
+        '''
+        
+        X  = self.x
+        Y  = self.y
+        n0 = len(X)
+        
+        cosA = np.cos(self.paras['AoA']/180.0*np.pi)
+        sinA = np.sin(self.paras['AoA']/180.0*np.pi)
 
         #* kaf => average Mw slope of the aft upper surface (3/N~T)
         xN  = self.xf_dict['N'][2]
@@ -1298,16 +1317,27 @@ class PhysicalSec(PhysicalSecWall):
         self.xf_dict['CLw'][1] = PFy*cosA - PFx*sinA
         self.xf_dict['Cdw'][1] = PFy*sinA + PFx*cosA
 
-    def extract_features(self, info=False):
+    def extract_features(self, info=False, is_basic=2):
         '''
         Extract flow features list in the dictionary.
+        
+        ### para
+        - `is_basic`: if is set 0, only basic and shock features are extracted
+            - need only geometry and cp
         '''
+        # rely only on cp (Mw)
         self.locate_basic()
-        self.locate_sep()
         self.locate_geo()
         i_1 = self.locate_shock(info=info)
-        # self.locate_BL(i_1)
-        self.aux_features()
+        
+        # rely on cf
+        if is_basic > 0 and self.dudy is not None:
+            self.locate_sep()
+            self.aux_features()
+        
+            if is_basic > 1 and self.Tw is not None:
+                self.locate_BL(i_1)
+                self.aux_features_BL()
 
     #!: output features
     def output_features(self, fname="feature2d.txt", append=True, keys_=None):
