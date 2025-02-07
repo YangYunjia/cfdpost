@@ -69,7 +69,7 @@ class PhysicalLine():
         '''
         raise NotImplementedError
 
-    def getValue(self, feature: str, key: str) -> float or List[float]:
+    def getValue(self, feature: str, key: str = 'i') -> float or List[float]:
         '''
         Get value of given feature.
 
@@ -325,7 +325,6 @@ class PhysicalSec(PhysicalSecWall):
         self.yl = gl(self.xx)
         self.mu = fmw(self.xx)
 
-
     def setdata(self, x, y, Cp, Tw, Hi, Hc, dudy):
         '''
         Set the data of this foil or section.
@@ -342,7 +341,6 @@ class PhysicalSec(PhysicalSecWall):
         fhu = interp1d(self.x[iLE:], self.Hc[iLE:], kind='cubic')
         self.hu = fhu(self.xx)
         
-
     def set_Mw(self, x, Mw):
         '''
         Set the Mw distribution of this foil or section.
@@ -872,11 +870,6 @@ class PhysicalSec(PhysicalSecWall):
         flag, i_F, i_1, i_U, i_3 = PhysicalSec.check_singleshock(xx, mu, dMw, d2Mw, dMwcri_1, info=info)
 
         self.xf_dict['lSW'][1] = flag
-        if not flag==1:
-            f = open('error.txt', 'w', encoding='utf-8')
-            f.write('Not single shock detected!')
-            f.close()
-            return 0
 
         #* F => shock foot position
         self.xf_dict['F'][1] = np.argmin(np.abs(X[iLE:]-xx[i_F])) + iLE
@@ -945,7 +938,7 @@ class PhysicalSec(PhysicalSecWall):
         # Find the maximum position of Mw in range [x_3, 0.9]
         i_A = 0
         max_A = 0.0
-        for i in np.arange(i_3, nn-1, 1):
+        for i in range(i_3, nn-1):
             if xx[i]>0.9:
                 break
             if mu[i]>max_A:
@@ -1331,13 +1324,19 @@ class PhysicalSec(PhysicalSecWall):
         i_1 = self.locate_shock(info=info)
         
         # rely on cf
-        if is_basic > 0 and self.dudy is not None:
-            self.locate_sep()
-            self.aux_features()
+        if is_basic > 0:
+            if self.dudy is not None:
+                self.locate_sep()
+                self.aux_features()
+            else:
+                print('WARNING: dudy is not assigned')
         
-            if is_basic > 1 and self.Tw is not None:
+        if is_basic > 1:
+            if i_1 > 0 and self.Tw is not None:
                 self.locate_BL(i_1)
                 self.aux_features_BL()
+            else:
+                print('WARNING: Tw is not assigned or not single shock wave')
 
     #!: output features
     def output_features(self, fname="feature2d.txt", append=True, keys_=None):
