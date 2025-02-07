@@ -811,7 +811,7 @@ class cfl3d():
         return xyz, qq
 
     @staticmethod
-    def readPlot2d(path: str, fname_grid='plot3d_grid.xyz', fname_sol='plot3d_sol.bin', binary=True, _double_precision=True):
+    def readPlot2d(path: str, fname_grid='plot3d_grid.xyz', fname_sol='plot3d_sol.bin', binary=True, _double_precision=True, version='6.8'):
         '''
         Plot2D Format grid and solution:
         2D, Whole, Unformatted, Multi-Block Grid and Solution
@@ -861,60 +861,90 @@ class cfl3d():
         if binary:
 
             with open(os.path.join(path, fname_grid), 'rb') as f:
+                
+                if version not in ['6.8']:
+                    a,  = st.unpack('i', f.read(4))
+                    ni, = st.unpack('i', f.read(4))
+                    nj, = st.unpack('i', f.read(4))
+                    xyz  = np.zeros((ni,nj,2))
 
-                _, num_block, _ = st.unpack('iii', f.read(12))
+                    for v in range(2):
+                        for j in range(nj):
+                            for i in range(ni):
+                                xyz[i,j,v], = st.unpack(s_format, f.read(r_format))
 
-                xyz = []
-                ni = np.zeros(num_block, dtype=np.int32)
-                nj = np.zeros(num_block, dtype=np.int32)
+                else:
+                    _, num_block, _ = st.unpack('iii', f.read(12))
 
-                _, = st.unpack('i', f.read(4))
-                for n in range(num_block):
-                    ni[n],nj[n], = st.unpack('ii', f.read(8))
-                _, = st.unpack('i', f.read(4))
+                    xyz = []
+                    ni = np.zeros(num_block, dtype=np.int32)
+                    nj = np.zeros(num_block, dtype=np.int32)
 
-                for n in range(num_block):
                     _, = st.unpack('i', f.read(4))
-                    temp = np.zeros((ni[n],nj[n],3))
-                    for d in range(3):
-                            for j in range(nj[n]):
-                                for i in range(ni[n]):
-                                    temp[i,j,d], = st.unpack(s_format, f.read(r_format))
+                    for n in range(num_block):
+                        ni[n],nj[n], = st.unpack('ii', f.read(8))
                     _, = st.unpack('i', f.read(4))
-                    xyz.append(copy.deepcopy(temp))
+
+                    for n in range(num_block):
+                        _, = st.unpack('i', f.read(4))
+                        print(ni[n],nj[n])
+                        temp = np.zeros((ni[n],nj[n],3))
+                        for d in range(3):
+                                for j in range(nj[n]):
+                                    for i in range(ni[n]):
+                                        temp[i,j,d], = st.unpack(s_format, f.read(r_format))
+                        _, = st.unpack('i', f.read(4))
+                        xyz.append(copy.deepcopy(temp))
                         
             with open(os.path.join(path, fname_sol), 'rb') as f:
 
-                _, num_block, _ = st.unpack('iii', f.read(12))
-                qq = []
-                ni = np.zeros(num_block, dtype=np.int32)
-                nj = np.zeros(num_block, dtype=np.int32)
+                if version not in ['6.8']:
+                    _,  = st.unpack('i', f.read(4))
+                    ni, = st.unpack('i', f.read(4))
+                    nj, = st.unpack('i', f.read(4))
+                    qq  = np.zeros((ni,nj,4))
 
-                _, = st.unpack('i', f.read(4))
-                for n in range(num_block):
-                    ni[n],nj[n] = st.unpack('ii', f.read(8))
-                _, = st.unpack('i', f.read(4))
-
-                for n in range(num_block):
-
-                    temp = np.zeros((ni[n],nj[n],4))
-
-                    _, = st.unpack('i', f.read(4))
                     mach, = st.unpack(s_format, f.read(r_format))   # freestream Mach number
                     alfa, = st.unpack(s_format, f.read(r_format))   # freestream angle-of-attack
                     reyn, = st.unpack(s_format, f.read(r_format))   # freestream Reynolds number
                     time, = st.unpack(s_format, f.read(r_format))   # time
-                    _, = st.unpack('i', f.read(4))
+
+                    for q in range(4):
+                        for j in range(nj):
+                            for i in range(ni):
+                                qq[i,j,q], = st.unpack(s_format, f.read(r_format))
+                
+                else:
+                    _, num_block, _ = st.unpack('iii', f.read(12))
+                    qq = []
+                    ni = np.zeros(num_block, dtype=np.int32)
+                    nj = np.zeros(num_block, dtype=np.int32)
 
                     _, = st.unpack('i', f.read(4))
-                    for d in range(4):
-                        for j in range(nj[n]):
-                            for i in range(ni[n]):
-                                temp[i,j,d], = st.unpack(s_format, f.read(r_format))
-
+                    for n in range(num_block):
+                        ni[n],nj[n] = st.unpack('ii', f.read(8))
                     _, = st.unpack('i', f.read(4))
 
-                    qq.append(copy.deepcopy(temp))
+                    for n in range(num_block):
+
+                        temp = np.zeros((ni[n],nj[n],4))
+
+                        _, = st.unpack('i', f.read(4))
+                        mach, = st.unpack(s_format, f.read(r_format))   # freestream Mach number
+                        alfa, = st.unpack(s_format, f.read(r_format))   # freestream angle-of-attack
+                        reyn, = st.unpack(s_format, f.read(r_format))   # freestream Reynolds number
+                        time, = st.unpack(s_format, f.read(r_format))   # time
+                        _, = st.unpack('i', f.read(4))
+
+                        _, = st.unpack('i', f.read(4))
+                        for d in range(4):
+                            for j in range(nj[n]):
+                                for i in range(ni[n]):
+                                    temp[i,j,d], = st.unpack(s_format, f.read(r_format))
+
+                        _, = st.unpack('i', f.read(4))
+
+                        qq.append(copy.deepcopy(temp))
 
         return xyz, qq, mach, alfa, reyn
 
