@@ -1012,7 +1012,7 @@ class PhysicalSec(PhysicalSecWall):
         '''
         nn  = xu.shape[0]
 
-        #* F => shock foot position
+        #* F => shock foot position (largest dMw/dx -> largest decsending position of Mw)
         i_F = np.argmin(dMw)
         x_F = xu[i_F]
 
@@ -1130,8 +1130,16 @@ class PhysicalSec(PhysicalSecWall):
         -1: multiple shock waves 
         ```
         '''
+        #* find the ma = 1 after first shock wave
+        _flag_first = False
+        for _i in range(1, len(mu)-1):
+            if _flag_first and mu[_i] >= 1.:
+                break
+            if mu[_i] > 1. and mu[_i + 1] < 1.:
+                _flag_first = True
+
         #* Get 1st shock
-        i_F, i_1, i_U, i_3 = PhysicalSec.shock_property(xu, mu, dMw, d2Mw, dMwcri_1)
+        i_F, i_1, i_U, i_3 = PhysicalSec.shock_property(xu[:_i], mu[:_i], dMw[:_i], d2Mw[:_i], dMwcri_1)
         d_F = dMw[i_F]
 
         #* Check if shockless
@@ -1139,7 +1147,7 @@ class PhysicalSec(PhysicalSecWall):
         if d_F>dMwcri_1 or mu[i_1]<1.0 or i_1==0:
             if info:
                 print('  Shockless:    XF=%.2f MF=%.2f dM/dX=%.2f'%(xu[i_F], mu[i_F], d_F))
-            return 0, 0, 0, 0, 0
+            return 0, i_F, 0, 0, 0
 
         #* Check if 2nd shock wave exists
         # Remove first shock
@@ -1169,7 +1177,7 @@ class PhysicalSec(PhysicalSecWall):
                 # Check supersonic wave front and 'subsonic' wave hind
                 if info:
                     print('  Second shock: X1=%.2f M1=%.2f M2=%.2f'%(xu[_i1], mu[_i1], mu[_i3]))
-                return -1, 0, 0, 0, 0
+                return -1, i_F, i_1, i_U, i_3
 
         return 1, i_F, i_1, i_U, i_3
 
