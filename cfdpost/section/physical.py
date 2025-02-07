@@ -240,6 +240,8 @@ class PhysicalSec(PhysicalSecWall):
         'R': ['reattachment', _i, _X],              # reattachment position
         'Q': ['lower LE', _i, _X],                  # suction peak near leading edge on lower surface
         'M': ['lower surface max Ma', _i, _X],      # position of lower surface maximum Mach number
+        'MT': ['lower surface max Ma behind Q', _i, _X],      
+        'LD': ['lower surface dent behind Q', _i, _X],
         'mUy': ['min(du/dy)', _i, _X],              # position of min(du/dy)
 
         'F': ['shock foot', _i, _X],                # shock foot position
@@ -250,7 +252,8 @@ class PhysicalSec(PhysicalSecWall):
         'B': ['1st dent after L', _i, _X],          # first dent after suction peak [X_L, X_L+0.1]
         #                                           # Note: for weak shock waves, may not reach Mw=1
         #                                           #       define position of U as Mw minimal extreme point after shock foot
-        'A': ['maximum Mw after shock', _i, _X],    # maximum wall Mach number after shock wave (or equal to 3)
+        'A': ['maximum Mw after shock', _i, _X],    # maximum wall Mach number after shock wave (or equal to '3')
+        'AD': ['minimum Mw between 3 & A', _i, _X],    # (or equal to '3')
         'N': ['new flat boundary', _i, _X],         # starting position of new flat boundary
         #                                           # most of the time, A == N
         'Hi':  ['maximum Hi', _i, _X],              # position of maximum Hi
@@ -273,7 +276,8 @@ class PhysicalSec(PhysicalSecWall):
         'Cdw': ['windward Cdp', _value],            # Cdp of windward surfaces (before crest point)
         'CLl': ['leeward CL', _value],              # CL of leeward surfaces (behind crest point)
         'Cdl': ['leeward Cdp', _value],             # Cdp of leeward surfaces (behind crest point)
-        'kaf': ['slope aft', _value]                # average Mw slope of the aft upper surface (3/N~T)
+        'kaf': ['slope aft', _value],               # average Mw slope of the aft upper surface (3/N~T)
+        'LDdent': ['dent depth between Q and MT', _value]
     }
 
     def __init__(self, Minf, AoA, Re, Tinf = 460, gamma = 1.40):
@@ -739,24 +743,54 @@ class PhysicalSec(PhysicalSecWall):
         self.xf_dict['H'][2] = X[i_H]
 
         #* Q => suction peak near leading edge on lower surface
-        for i in range(int(self.paras['Qratio']*0.5*nn)):
-            ii = iLE - i
+        for ii in range(iLE - 1, 1, -1):
+            if X[ii] > self.paras['Qratio']:
+                continue
             if M[ii-1]<=M[ii] and M[ii]>=M[ii+1]:
                 self.xf_dict['Q'][1] = ii
                 self.xf_dict['Q'][2] = X[ii]
                 break
+        else:
+            self.xf_dict['Q'][1] = iLE
+            self.xf_dict['Q'][2] = 0.0
 
-        #* M => position of lower surface maximum Mach number
-        i_M = 0
+        i_Q = self.xf_dict['Q'][1]
+
+        #* MT => position of lower surface maximum Mach number behund suction peak
+        # if not exist, set i_MT to i_Q
+        i_MT = i_Q
         max1 = -1.0
-        for i in np.arange(1, iLE, 1):
+        for i in range(1, i_Q - 1):
             if M[i-1]<=M[i] and M[i+1]<=M[i] and M[i]>max1:
                 max1 = M[i]
-                i_M = i
+                i_MT = i
 
+        self.xf_dict['MT'][1] = i_MT
+        self.xf_dict['MT'][2] = X[i_MT]
+                        
+        #* M => position of lower surface maximum Mach number
+        i_M = i_MT if M[i_MT] > M[i_Q] else i_Q
         self.xf_dict['M'][1] = i_M
         self.xf_dict['M'][2] = X[i_M]
-
+                
+        #* LD => position of lowest Ma between lower surface suction peak and max Ma at lower surface
+        if i_Q == iLE or i_Q == i_MT:
+            # no lower surface suction peak
+            self.xf_dict['LD'][1] = iLE
+            self.xf_dict['LD'][2] = 0.
+            self.xf_dict['LDdent'][1] = 0.
+        else:
+            i_LD = self.xf_dict['MT'][1]
+            min1 = 2.0
+            for _i in range(i_MT + 1, i_Q):
+                if M[_i-1]>=M[_i] and M[_i+1]>=M[_i] and M[_i]<min1:
+                    min1 = M[_i]
+                    i_LD = _i
+            
+            self.xf_dict['LD'][1] = i_LD
+            self.xf_dict['LD'][2] = X[i_LD]
+            self.xf_dict['LDdent'][1] = M[i_MT] + (X[i_LD] - X[i_MT]) / (X[i_Q] - X[i_MT]) * (M[i_Q] - M[i_MT]) - M[i_LD]
+            
     def locate_sep(self):
         '''
         Locate the index and position of flow features about du/dy.
@@ -950,7 +984,18 @@ class PhysicalSec(PhysicalSecWall):
         x_A = xx[i_A]
         self.xf_dict['A'][1] = np.argmin(np.abs(X[iLE:]-x_A)) + iLE
         self.xf_dict['A'][2] = x_A
-
+        
+        #* AD => local minium between 3 and A
+        i_AD = i_3
+        min_AD = 10.0
+        for _i in range(i_3, i_A):
+            if mu[_i] < mu[_i-1] and mu[_i] > mu[_i+1] and mu[_i] < min_AD:
+                i_AD = _i
+                
+        x_AD = xx[i_AD]
+        self.xf_dict['AD'][1] = np.argmin(np.abs(X[iLE:]-x_AD)) + iLE
+        self.xf_dict['AD'][2] = x_AD
+        
         return i_1
 
     def locate_BL(self, i_1):
