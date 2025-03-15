@@ -91,23 +91,19 @@ class cfl3d():
                 k += 1
 
         CL_  = np.mean(CLs)
-        if k < n*0.5:
+        if k < n*0.5 or np.max(CLs)-np.min(CLs) > max(conv_hold, conv_hold*CL_):
             converge = False
 
-        elif np.max(CLs)-np.min(CLs) < max(conv_hold, conv_hold*CL_):
-            CL = CL_
-            CD = np.mean(CDs)
-            Cm = np.mean(Cms)
-            CDp = np.mean(CDps)
-            CDf = np.mean(CDfs)
-            errs[0] = np.max(CLs)-np.min(CLs)
-            errs[1] = np.max(CDs)-np.min(CDs)
-            errs[2] = np.max(Cms)-np.min(Cms)
-            errs[3] = np.max(CDps)-np.min(CDps)
-            errs[4] = np.max(CDfs)-np.min(CDfs)
-
-        else:
-            converge = False
+        CL = CL_
+        CD = np.mean(CDs)
+        Cm = np.mean(Cms)
+        CDp = np.mean(CDps)
+        CDf = np.mean(CDfs)
+        errs[0] = np.max(CLs)-np.min(CLs)
+        errs[1] = np.max(CDs)-np.min(CDs)
+        errs[2] = np.max(Cms)-np.min(Cms)
+        errs[3] = np.max(CDps)-np.min(CDps)
+        errs[4] = np.max(CDfs)-np.min(CDfs)
         
         if output_error:
             return converge, CL, CD, Cm, CDp, CDf, errs
