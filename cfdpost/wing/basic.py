@@ -195,7 +195,8 @@ class Wing():
             - N_V = 1:  only Cp include, will be set to V9
             - N_V = 2:  cp and cftau, will be set to V9 & V17
             - N_V = 3:  cp, cftau, cfz, will be set to V9, V17, V16 (in old version, V9, V15, V17)
-        - `isnormed`:   if `True`, cftau & cfz will be divided by 200, 250, respectively
+        - `isnormed`:   if `True`, cftau & cfz will be divided by 250, 200, respectively
+            the non-dim factors was wrong to 200, 250
         
         '''
         if geometry is not None:
@@ -210,16 +211,16 @@ class Wing():
                 blk[:, :, 9]      = data[0]
             elif data.shape[0] == 2:
                 blk[:, :, 9]      = data[0]
-                blk[:, :, 17]     = data[1] / (1, 200)[isnormed] # cftau
+                blk[:, :, 17]     = data[1] / (1, 250)[isnormed] # cftau
             elif data.shape[0] == 3:
                 blk[:, :, 9]      = data[0]
-                blk[:, :, 16]     = data[2] / (1, 250)[isnormed] # cfz
-                blk[:, :, 17]     = data[1] / (1, 200)[isnormed] # cftau
+                blk[:, :, 16]     = data[2] / (1, 200)[isnormed] # cfz
+                blk[:, :, 17]     = data[1] / (1, 250)[isnormed] # cftau
             # fsw dataset format
             elif data.shape[0] == 4:
                 blk[:, :, 9]      = data[0]
-                blk[:, :, 16]     = data[1] / (1, 250)[isnormed] # cfz
-                blk[:, :, 17]     = data[2] / (1, 200)[isnormed] # cftau
+                blk[:, :, 16]     = data[1] / (1, 200)[isnormed] # cfz
+                blk[:, :, 17]     = data[2] / (1, 250)[isnormed] # cftau
                 blk[:, :, 18]     = data[3] # cfnor
 
     def read_formatted_geometry(self, geometry: np.ndarray, aoa: float = None, ftype: float = 0):
