@@ -6,7 +6,8 @@ axis_2_idx = {'x': 3, 'y': 4, 'z': 5}
 
 import os
 import platform
-
+        
+import ctypes
 import numpy as np
 import struct as st
 
@@ -1264,3 +1265,114 @@ class cfl3d():
         f.close()
 
 
+class adflow():
+    
+    '''
+    Use dynamic link library fron CGNS (libcgns.so) to read .cgns file
+    (Compatible for both ADF and HDF5 format)
+    
+    '''
+    
+    def __init__(self, libMode: str = 'assign', libPath: str = '/home/mdolabuser/packages/CGNS-4.2.0/opt-gcc/lib/libcgns.so'):
+        
+        if libMode == 'assign':
+            
+            _libPath = libPath
+    
+        try:
+            self.lib = ctypes.CDLL(_libPath)
+        
+        except:
+            pass
+    
+    def readErrMess(self):
+        
+        errMess = (ctypes.c_char * 200).in_dll(self.lib, "cgns_error_mess")
+        return errMess.value.decode('utf-8')
+        
+    def readFile(self, fileName: str, readType: str = '111', varNames: List[str] = ['CoefPressure']):
+        '''
+        
+        param:
+        ===
+        - `readType`:
+            - `0` or `1` at each bit ->  info / mesh / field
+        
+        - `varNames`: List of names
+            see `cgnsNames.F90` in adflow for names
+        
+        '''
+
+        fileName = fileName.encode('utf-8')
+        mode     = ctypes.c_int(0)
+        cg       = ctypes.c_int(10)
+        ier      = ctypes.c_int(0)
+        base     = ctypes.c_int(1)
+        baseName = ctypes.create_string_buffer(512)
+        cellDim  = ctypes.c_int(0)
+        physDim  = ctypes.c_int(0)
+        nBlock   = ctypes.c_int(0)
+
+        realType = ctypes.c_int(4)
+
+        ierr = self.lib.cg_open(fileName, mode, ctypes.pointer(cg))
+        assert ierr == 0, f'cg_open return: "{self.readErrMess()}"'
+        # print(cg.value)
+
+        ierr = self.lib.cg_base_read(cg, base, baseName, ctypes.pointer(cellDim), ctypes.pointer(physDim))
+        ierr = self.lib.cg_nzones(cg, base, ctypes.pointer(nBlock))
+        
+        if readType[0] == '1': print(f'[ZONE] {baseName.value.decode("utf-8")} dim = {cellDim.value}, nBlock = {nBlock.value}')
+
+        data = []
+
+        for iBlock in range(1, nBlock.value + 1):
+            
+            zoneName = ctypes.create_string_buffer(512)
+            tmp = (ctypes.c_int * 9)(*[0 for _ in range(9)])
+            
+            self.lib.cg_zone_read(cg, base, iBlock, zoneName, tmp, ier)
+            dims = np.ctypeslib.as_array(tmp, shape=(9,))[:3]
+            
+            if cellDim.value == 2:
+                dims[2] = 1
+                
+            if readType[0] == '1': print(f' > [BLOCK #{iBlock:2d}] {zoneName.value.decode("utf-8")} dims = {dims[::-1]}')
+            
+            blockStart  = (ctypes.c_int * 3)(*[1, 1, 1])
+            blockEnd    = (ctypes.c_int * 3)(*dims)
+            
+            blockData = []
+            
+            if readType[1] == '1':
+                
+                coord = []
+                for varName in [b'CoordinateX', b'CoordinateY', b'CoordinateZ']:
+                    tmpCoordptr = np.zeros(dims, dtype=np.float64).ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                    ierr = self.lib.cg_coord_read(cg, base, iBlock, varName, realType, blockStart, blockEnd, tmpCoordptr)
+                    assert ierr == 0, f'cg_coord_read return: "{self.readErrMess()}"'
+                    
+                    coord.append(np.ctypeslib.as_array(tmpCoordptr, shape=(dims[2], dims[1], dims[0])))
+                
+                blockData.append(np.array(coord))
+
+            if readType[2] == '1':
+                
+                sol = []
+                for varName in varNames:
+            
+                    cgnsVarName = varName.encode('utf-8')
+                    
+                    tmpSolptr = np.zeros(dims, dtype=np.float64).ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                    ierr = self.lib.cg_field_read(cg, base, iBlock, 1, cgnsVarName, realType, blockStart, blockEnd, tmpSolptr)
+                    assert ierr == 0, f'cg_field_read return: "{self.readErrMess()}"'
+                    
+                    sol.append(np.ctypeslib.as_array(tmpSolptr, shape=(dims[2], dims[1], dims[0])))
+                   
+                blockData.append(np.array(sol))
+            
+            data.append(blockData)
+
+        ierr = self.lib.cg_close(cg)
+        
+        return data
