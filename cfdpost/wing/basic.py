@@ -55,40 +55,44 @@ def reconstruct_surface_frame(nx: int, cst_us: List[np.ndarray], cst_ls: List[np
 
     return xxs, yys
 
-class Wing():
-    '''
-    must geometry:
-        - "swept_angle"   (leading edge)
-        - "dihedral_angle"
-        - "aspect_ratio"
-        - "tapper_ratio"
-        - "tip_twist_angle" (deg.)
-        - "tip2root_thickness_ratio"
-        - "ref_area"
+class BasicWing():
     
-    variables:
-        ```text
-        X, Y, Z, U_X, U_Y, U_Z, P, T, M, CP, MUT, DIS, CH, YPLUS, CF_X, CF_Y, CF_Z, (CF_TAU, CF_NOR)
-        0  1  2    3    4    5  6  7  8   9   10   11  12     13    14    15    16  (    17      18)
-        ```
-    '''
-    _format_geometry_indexs = ['id', 'AoA', 'Mach', 'swept_angle', 'dihedral_angle', 'aspect_ratio', 'tapper_ratio',  
-                'tip_twist_angle', 'tip2root_thickness_ratio', 'ref_area']
-    _format_geometry_indexs_short = ['AoA', 'Mach', 'swept_angle', 'dihedral_angle', 'aspect_ratio', 'tapper_ratio',  
-                'tip_twist_angle', 'tip2root_thickness_ratio']
-    
-    def __init__(self, geometry: Union[np.ndarray, dict] = None, aoa: float = None) -> None:
-
-        self.g = {}
+    def __init__(self, paras: dict = None, aoa: float = None):
         
-        if geometry is not None:
-            if isinstance(geometry, dict):   self.read_geometry(geometry, aoa)
-            elif isinstance(geometry, np.ndarray) or isinstance(geometry, list): self.read_formatted_geometry(geometry, aoa)
+        self.g = {}                 # geometric parameters dictionary
+                                    # for calculating lift distribution, `half_span` and `ref_area` are required
+                                    # which can be calulated either from input planform parameters or input geom-
+                                    # tric data with `calc_planform`
+        self._init_blocks()         # wing data (only involve single surface blocks now)
+        self.cl = np.zeros((3,))    # CL, CD, CM
+        self.cl_curve = None        # lift distributions
+        
+        if isinstance(paras, dict): 
+            self.g = paras
+        
+            if 'aoa' in paras.keys(): self.aoa = paras['aoa']
+            elif 'AoA' in paras.keys(): self.aoa = paras['AoA']
+        
+        if aoa is not None:
+            self.aoa = aoa
 
-        self._init_blocks()
-        self.var_list = []
-        self.cl = np.zeros((2,))
-        self.cl_curve = None
+    def _init_blocks(self):
+        self.surface_blocks = []
+        # self.tail_blocks = []
+        # self.tip_blocks = []    
+
+    def calc_planform(self):
+        '''
+        Calculate halfspan and refarea (projection area)
+        
+        '''
+        blk = self.surface_blocks[0]
+        z = blk[:, 0, 2]
+        self.g['half_span'] = max(z)
+
+        x = np.max(blk[:, :, 0], axis=1) - np.min(blk[:, :, 0], axis=1)
+        y = blk[:, 0, 1]
+        self.g['ref_area'] = np.sum(0.5 * (x[:-1] + x[1:]) * (y[1:] - y[:-1]))
 
     @property
     def leading_edge_index(self):
@@ -108,84 +112,9 @@ class Wing():
         '''
         
         return self.surface_blocks[0][:, :, :3]
-
-    def _init_blocks(self):
-        self.surface_blocks = []
-        # self.tail_blocks = []
-        # self.tip_blocks = []
-
-    def read_geometry(self, geometry: dict, aoa: float = None):
-
-        must_keys = ["swept_angle", "dihedral_angle", "aspect_ratio", "tapper_ratio", "tip_twist_angle", "tip2root_thickness_ratio"]
-
-        if sum([kk not in geometry.keys() for kk in must_keys]) > 0:
-            raise ValueError('geometry dictionary is missing keys')
-
-        self.g = geometry
-        if 'ref_area' not in self.g.keys():
-            self.g['ref_area'] = 0.125 * self.g['aspect_ratio'] * (1 + self.g['tapper_ratio'])**2
-        if 'half_span' not in self.g.keys():
-            self.g['half_span'] = 0.25 * self.g['aspect_ratio'] * (1 + self.g['tapper_ratio'])
-        
-        if 'aoa' in self.g.keys(): self.aoa = self.g['aoa']
-        elif 'AoA' in self.g.keys(): self.aoa = self.g['AoA']
-        else:
-            self.aoa = aoa
-
-    def read_prt(self, path, mode='surf'):
-        '''
-
-        
-        ```text
-        LE1
-        -----
-             -------   LE2
-                     ---|
-        --------        |
-        TE1      -------|
-                       TE2
-
-        y
-        .--> z
-        |
-        x
-        ```
-
-        `self.surface_blocks`:  `list of np.ndarray`
-            the dims of `ndarray`: (i_sec (y) x i_foil (xz) x i_variable(17 or 19))
-                
-                
-        variables:
-        ```text
-        X, Y, Z, U_X, U_Y, U_Z, P, T, M, CP, MUT, DIS, CH, YPLUS, CF_X, CF_Y, CF_Z, (CF_TAU, CF_NOR)
-        0  1  2    3    4    5  6  7  8   9   10   11  12     13    14    15    16  (    17      18)
-        ```
-        '''
-
-        #! this part is not unversial, only for simple wing grid
-        self._init_blocks()
-        if mode == 'surf':
-            xy, qq = cfl3d.readsurf2d(path)
-            blocks = [np.concatenate((xy[i], qq[i]), axis=3) for i in range(len(xy))]
-        else:
-            block_p, block_v = cfl3d.readprt(path)
-            blocks = [np.concatenate((block_p[i], block_v[i]), axis=3) for i in range(len(block_p))]
-
-        n_sec = int(len(blocks) / 2)
-
-        _surface_blocks = []
-
-        for i_sec in range(n_sec):
-            _surface_blocks.append(blocks[2 * i_sec][int(i_sec > 0):, :, 0])
-            # self.tail_blocks.append(blocks[i_sec+1])
-            # self.tip_blocks.append(blocks[i_sec+2])
-        self.surface_blocks.append(np.concatenate(_surface_blocks))
-        # sectional_1 = self.surface_blocks[0][0, :]
-        # sectional_2 = self.surface_blocks[-1][-1, :]
-
-        # print(self.surface_blocks[0].shape)
-
-    def read_formatted_surface(self, geometry: np.ndarray = None, data: np.ndarray = None, isnormed: bool = False):
+    
+    def read_formatted_surface(self, geometry: np.ndarray = None, data: np.ndarray = None, 
+                               isnormed: bool = False, isxyz: bool = False, isinitg: bool = False):
         '''
         read np.ndarray data to the wing
 
@@ -204,83 +133,33 @@ class Wing():
             new_block = np.zeros((geometry.shape[1], geometry.shape[2], 19))
             new_block[:, :, 0:3]    = geometry.transpose((1, 2, 0))
             self.surface_blocks.append(new_block)
+            if isinitg: self.calc_planform()
         
         if data is not None:
             blk = self.surface_blocks[0]
             if data.shape[0] == 1:
                 blk[:, :, 9]      = data[0]
             elif data.shape[0] == 2:
+                if isxyz: raise RuntimeError('read_formatted_surface get 2 channel data, which can not be CFX, CFY, CFZ')
                 blk[:, :, 9]      = data[0]
                 blk[:, :, 17]     = data[1] / (1, 250)[isnormed] # cftau
             elif data.shape[0] == 3:
+                if isxyz: raise RuntimeError('read_formatted_surface get 3 channel data, which can not be CFX, CFY, CFZ')
                 blk[:, :, 9]      = data[0]
                 blk[:, :, 16]     = data[2] / (1, 200)[isnormed] # cfz
                 blk[:, :, 17]     = data[1] / (1, 250)[isnormed] # cftau
             # fsw dataset format
             elif data.shape[0] == 4:
                 blk[:, :, 9]      = data[0]
-                blk[:, :, 16]     = data[1] / (1, 200)[isnormed] # cfz
-                blk[:, :, 17]     = data[2] / (1, 250)[isnormed] # cftau
-                blk[:, :, 18]     = data[3] # cfnor
-
-    def read_formatted_geometry(self, geometry: np.ndarray, aoa: float = None, ftype: float = 0):
-        '''
-        
-        paras:
-        ===
-        - `type` 
-            - `0` :
-                'id', 'AoA', 'Mach', 'swept_angle', 'dihedral_angle', 'aspect_ratio', 'tapper_ratio',  
-                'tip_twist_angle', 'tip2root_thickness_ratio', 'ref_area', 'root_thickness', 'cstu'(10), 'cstl'(10)
-            - `1` :
-                'AoA', 'Mach', 'swept_angle', 'dihedral_angle', 'aspect_ratio', 'tapper_ratio',  
-                'tip_twist_angle', 'tip2root_thickness_ratio', 'root_thickness', 'cstu'(10), 'cstl'(10)
-        '''
-        
-        wing_param = {}
-        if ftype == 1:
-            index_keys = self.__class__._format_geometry_indexs_short
-            i_foil_start = 8
-        else:
-            index_keys = self.__class__._format_geometry_indexs
-            i_foil_start = 10
-            
-        for idx, key in enumerate(index_keys):
-            wing_param[key] = float(geometry[idx])
-
-        wing_param['root_thickness'] = float(geometry[i_foil_start])
-        wing_param['cstu'] = [np.array(geometry[i_foil_start+1:i_foil_start+11]) for _ in range(2)]
-        wing_param['cstl'] = [np.array(geometry[i_foil_start+11:i_foil_start+21]) for _ in range(2)]
-        
-        self.read_geometry(wing_param, aoa)
-
-    def reconstruct_surface_grids(self, nx, nzs, tail=0.004):
-        '''
-        reconstruct surface grid points (same to generate volume grid points in CFD simulations)
-
-        '''
-
-        troot = self.g['root_thickness']
-        xxs, yys = reconstruct_surface_frame(nx, self.g['cstu'], self.g['cstl'], 
-                                             [troot, (troot * self.g['tip2root_thickness_ratio'])], self.g)
-
-        # for idx, ny in enumerate(nys):
-        idx = 0
-        nz = nzs[0]
-        blockz = np.tile(np.linspace(0, self.g['half_span'], nz).reshape(1, -1), (2*nx-1, 1))
-        blockx = np.outer(xxs[0], np.linspace(1, 0, nz)) + np.outer(xxs[1], np.linspace(0, 1, nz))
-        blocky = np.outer(yys[0], np.linspace(1, 0, nz)) + np.outer(yys[1], np.linspace(0, 1, nz))
-        
-        new_block = np.zeros((nz, 2*nx-1, 19))
-        new_block[:, :, :3] = np.stack((blockx, blocky, blockz)).transpose((2, 1, 0))
-        self.surface_blocks.append(new_block)
-
-    def reconstruct_strictx_surface_grids(self, cst_us, cst_ls, troot, nx, nzs, tail=0.004):
-        '''
-        reconstruct surface grid points (same to model training - same x distributions)
-        
-        '''
-        raise NotImplementedError()
+                
+                if isxyz:
+                    if isnormed: raise RuntimeError('CFX, CFY, CFZ can not be normalized')
+                    blk[:, :, 14:17]     = np.transpose(data[1:4], (1, 2, 0)) # cfx, y, z
+                    self._get_normal_cf()
+                else:  
+                    blk[:, :, 16]     = data[1] / (1, 200)[isnormed] # cfz
+                    blk[:, :, 17]     = data[2] / (1, 250)[isnormed] # cftau
+                    blk[:, :, 18]     = data[3] # cfnor
 
     def _get_normal_cf(self):
         '''
@@ -315,7 +194,12 @@ class Wing():
         cftg = np.einsum('ijk,ijk->ij', tangens, cfxz)
         cfnm = np.einsum('ijk,ijk->ij', normals, cfxz)
 
-        self.surface_blocks[0] = np.dstack((blk, cftg, cfnm))
+        if self.surface_blocks[0].shape[2] == 19:
+            self.surface_blocks[0][:, :, 17:19] = np.dstack((cftg, cfnm))
+        elif self.surface_blocks[0].shape[2] == 17:
+            self.surface_blocks[0] = np.dstack((blk, cftg, cfnm))
+        else:
+            raise RuntimeError('!!!')
         # print(cftg[:, 0], self.surface_blocks[0][:, 0, -2])
         # return cftg, cfnm
 
@@ -463,24 +347,6 @@ class Wing():
         
         return self.section_lift_coefficient(y) / self.sectional_chord(y)
 
-    def swept_angle(self, chord=0.25):
-        '''
-        The swept angle according to chord section `chord`
-        
-        return in degree
-
-        '''
-        if chord < 0.0  or chord > 1.0:
-            raise ValueError('swept baseline should be between 0 and 1, current %.2f' % chord)
-
-        sa0 = self.g['swept_angle']
-        if chord == 0:  return sa0
-
-        tr  = self.g['tapper_ratio']
-        ar  = self.g['aspect_ratio']
-
-        return _swept_angle(chord, sa0, ar, tr)
-    
     #* =============================
     # below are functions for plot a wing
     def plot_wing(self, contour=4):
@@ -501,8 +367,8 @@ class Wing():
         for i in range(0, 60, 10):
             ax.plot(blk[i, :, 0], blk[i, :, 2], -blk[i, :, 9] / 5 + 0.3 + blk[i, 0, 1], c='k')
         ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_zlabel('Z')
+        ax.set_ylabel('Z')
+        ax.set_zlabel('Y')
         ax.view_init(elev=10, azim=110)
         plt.show()
 
@@ -528,6 +394,179 @@ class Wing():
         
         _plot_2d_wing(fig, surfaces[0], surfaces[1], contour, vrange, text, reverse_y, etas)
 
+class Wing(BasicWing):
+    '''
+    must geometry:
+        - "swept_angle"   (leading edge)
+        - "dihedral_angle"
+        - "aspect_ratio"
+        - "tapper_ratio"
+        - "tip_twist_angle" (deg.)
+        - "tip2root_thickness_ratio"
+        - "ref_area"
+    
+    variables:
+        ```text
+        X, Y, Z, U_X, U_Y, U_Z, P, T, M, CP, MUT, DIS, CH, YPLUS, CF_X, CF_Y, CF_Z, (CF_TAU, CF_NOR)
+        0  1  2    3    4    5  6  7  8   9   10   11  12     13    14    15    16  (    17      18)
+        ```
+    '''
+    _format_geometry_indexs = ['id', 'AoA', 'Mach', 'swept_angle', 'dihedral_angle', 'aspect_ratio', 'tapper_ratio',  
+                'tip_twist_angle', 'tip2root_thickness_ratio', 'ref_area']
+    _format_geometry_indexs_short = ['AoA', 'Mach', 'swept_angle', 'dihedral_angle', 'aspect_ratio', 'tapper_ratio',  
+                'tip_twist_angle', 'tip2root_thickness_ratio']
+    
+    def __init__(self, geometry: Union[list, np.ndarray, dict] = None, aoa: float = None) -> None:
+        
+        super().__init__(paras=geometry, aoa=aoa, init_g=False)
+        
+        if geometry is not None:
+            if isinstance(geometry, dict):   self.read_geometry(geometry)
+            elif isinstance(geometry, np.ndarray) or isinstance(geometry, list): self.read_formatted_geometry(geometry)
+
+    def read_geometry(self, geometry: dict, aoa: float = None):
+
+        must_keys = ["swept_angle", "dihedral_angle", "aspect_ratio", "tapper_ratio", "tip_twist_angle", "tip2root_thickness_ratio"]
+
+        if sum([kk not in geometry.keys() for kk in must_keys]) > 0:
+            raise ValueError('geometry dictionary is missing keys')
+
+        self.g = geometry
+        if 'ref_area' not in self.g.keys():
+            self.g['ref_area'] = 0.125 * self.g['aspect_ratio'] * (1 + self.g['tapper_ratio'])**2
+        if 'half_span' not in self.g.keys():
+            self.g['half_span'] = 0.25 * self.g['aspect_ratio'] * (1 + self.g['tapper_ratio'])
+
+    def read_prt(self, path, mode='surf'):
+        '''
+
+        
+        ```text
+        LE1
+        -----
+             -------   LE2
+                     ---|
+        --------        |
+        TE1      -------|
+                       TE2
+
+        y
+        .--> z
+        |
+        x
+        ```
+
+        `self.surface_blocks`:  `list of np.ndarray`
+            the dims of `ndarray`: (i_sec (y) x i_foil (xz) x i_variable(17 or 19))
+                
+                
+        variables:
+        ```text
+        X, Y, Z, U_X, U_Y, U_Z, P, T, M, CP, MUT, DIS, CH, YPLUS, CF_X, CF_Y, CF_Z, (CF_TAU, CF_NOR)
+        0  1  2    3    4    5  6  7  8   9   10   11  12     13    14    15    16  (    17      18)
+        ```
+        '''
+
+        #! this part is not unversial, only for simple wing grid
+        self._init_blocks()
+        if mode == 'surf':
+            xy, qq = cfl3d.readsurf2d(path)
+            blocks = [np.concatenate((xy[i], qq[i]), axis=3) for i in range(len(xy))]
+        else:
+            block_p, block_v = cfl3d.readprt(path)
+            blocks = [np.concatenate((block_p[i], block_v[i]), axis=3) for i in range(len(block_p))]
+
+        n_sec = int(len(blocks) / 2)
+
+        _surface_blocks = []
+
+        for i_sec in range(n_sec):
+            _surface_blocks.append(blocks[2 * i_sec][int(i_sec > 0):, :, 0])
+            # self.tail_blocks.append(blocks[i_sec+1])
+            # self.tip_blocks.append(blocks[i_sec+2])
+        self.surface_blocks.append(np.concatenate(_surface_blocks))
+        # sectional_1 = self.surface_blocks[0][0, :]
+        # sectional_2 = self.surface_blocks[-1][-1, :]
+
+        # print(self.surface_blocks[0].shape)
+
+    def read_formatted_geometry(self, geometry: np.ndarray, aoa: float = None, ftype: float = 0):
+        '''
+        
+        paras:
+        ===
+        - `type` 
+            - `0` :
+                'id', 'AoA', 'Mach', 'swept_angle', 'dihedral_angle', 'aspect_ratio', 'tapper_ratio',  
+                'tip_twist_angle', 'tip2root_thickness_ratio', 'ref_area', 'root_thickness', 'cstu'(10), 'cstl'(10)
+            - `1` :
+                'AoA', 'Mach', 'swept_angle', 'dihedral_angle', 'aspect_ratio', 'tapper_ratio',  
+                'tip_twist_angle', 'tip2root_thickness_ratio', 'root_thickness', 'cstu'(10), 'cstl'(10)
+        '''
+        
+        wing_param = {}
+        if ftype == 1:
+            index_keys = self.__class__._format_geometry_indexs_short
+            i_foil_start = 8
+        else:
+            index_keys = self.__class__._format_geometry_indexs
+            i_foil_start = 10
+            
+        for idx, key in enumerate(index_keys):
+            wing_param[key] = float(geometry[idx])
+
+        wing_param['root_thickness'] = float(geometry[i_foil_start])
+        wing_param['cstu'] = [np.array(geometry[i_foil_start+1:i_foil_start+11]) for _ in range(2)]
+        wing_param['cstl'] = [np.array(geometry[i_foil_start+11:i_foil_start+21]) for _ in range(2)]
+        
+        self.read_geometry(wing_param)
+
+    def reconstruct_surface_grids(self, nx, nzs, tail=0.004):
+        '''
+        reconstruct surface grid points (same to generate volume grid points in CFD simulations)
+
+        '''
+
+        troot = self.g['root_thickness']
+        xxs, yys = reconstruct_surface_frame(nx, self.g['cstu'], self.g['cstl'], 
+                                             [troot, (troot * self.g['tip2root_thickness_ratio'])], self.g)
+
+        # for idx, ny in enumerate(nys):
+        idx = 0
+        nz = nzs[0]
+        blockz = np.tile(np.linspace(0, self.g['half_span'], nz).reshape(1, -1), (2*nx-1, 1))
+        blockx = np.outer(xxs[0], np.linspace(1, 0, nz)) + np.outer(xxs[1], np.linspace(0, 1, nz))
+        blocky = np.outer(yys[0], np.linspace(1, 0, nz)) + np.outer(yys[1], np.linspace(0, 1, nz))
+        
+        new_block = np.zeros((nz, 2*nx-1, 19))
+        new_block[:, :, :3] = np.stack((blockx, blocky, blockz)).transpose((2, 1, 0))
+        self.surface_blocks.append(new_block)
+
+    def reconstruct_strictx_surface_grids(self, cst_us, cst_ls, troot, nx, nzs, tail=0.004):
+        '''
+        reconstruct surface grid points (same to model training - same x distributions)
+        
+        '''
+        raise NotImplementedError()
+
+    def swept_angle(self, chord=0.25):
+        '''
+        The swept angle according to chord section `chord`
+        
+        return in degree
+
+        '''
+        if chord < 0.0  or chord > 1.0:
+            raise ValueError('swept baseline should be between 0 and 1, current %.2f' % chord)
+
+        sa0 = self.g['swept_angle']
+        if chord == 0:  return sa0
+
+        tr  = self.g['tapper_ratio']
+        ar  = self.g['aspect_ratio']
+
+        return _swept_angle(chord, sa0, ar, tr)
+    
     #* =============================
     # below are functions for lifting-line theory
 
@@ -553,7 +592,6 @@ class Wing():
         dacoef = [np.sum(np.arange(1, k, 2) * xx * np.sin(np.arange(1, k, 2) * theta) / np.sin(theta)) / np.pi for theta in thetas]
         return np.array(dacoef)
 
-
 class KinkWing(Wing):
     
     _format_geometry_indexs = ['id', 'AoA', 'Mach', 'swept_angle', 'dihedral_angle', 'aspect_ratio', 'kink', 'tapper_ratio_in', 'tapper_ratio_ou', 
@@ -577,11 +615,6 @@ class KinkWing(Wing):
             self.g['inner_span'] = self.g['kink'] * self.g['half_span']
             self.g['outer_span'] = (1 - self.g['kink']) * self.g['half_span']
 
-        if 'aoa' in self.g.keys(): self.aoa = self.g['aoa']
-        elif 'AoA' in self.g.keys(): self.aoa = self.g['AoA']
-        else:
-            self.aoa = aoa
-
     def sectional_chord_eta(self, eta: Union[float, np.ndarray]):
         etak = self.g['kink']
         if eta < etak:
@@ -591,7 +624,6 @@ class KinkWing(Wing):
 
     def sectional_chord(self, y: Union[float, np.ndarray]):
         return self.sectional_chord_eta(y / self.g['half_span'])
-
 
 
 def interpolate_section(surface, y=None, eta=None, norm=False):
