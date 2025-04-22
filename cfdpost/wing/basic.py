@@ -668,8 +668,8 @@ def plot_2d_wing_surface(ax: Axes, surface, contour=4, vrange=(None, None), text
     ax.set_aspect('equal')
 
     # plot arrow to indicate freestream
-    ax.arrow(2, 0, 0, -0.4, color='k', head_width=0.05, head_length=0.1)
-    ax.text(2.1, -0.3, 'freestream')
+    # ax.arrow(2, 0, 0, -0.4, color='k', head_width=0.05, head_length=0.1)
+    # ax.text(2.1, -0.3, 'freestream')
     
     # plot the text if given 
     text_x = 3.5
@@ -739,7 +739,7 @@ def points2line(p1, p2):
 def plot_top_view(ax: Axes, sa0: float, ar: float, tr: float):
     p1 = [0, 0]
     p2 = [0, 1]
-    half_span = (0.5 * ar * 0.125 * ar * (1 + tr)**2)**0.5
+    half_span = 0.25 * ar * (1 + tr)
     p3 = [half_span, -half_span * np.tan(sa0 / DEGREE)]
     p4 = [half_span, -half_span * np.tan(sa0 / DEGREE) + tr]
 
@@ -768,6 +768,36 @@ def plot_top_view_kink(ax: Axes, sa0, etak, ar, trin, trout):
     ax.plot(*points2line(p2, p4), c='k', ls='-')
     ax.plot(*points2line(p5, p6), c='k', ls='-')
     ax.plot(*points2line(p4, p6), c='k', ls='-')
+
+    ax.set_aspect('equal')
+
+    return ax
+
+def plot_top_view_kink1(ax: Axes, sa0, etak, ar, tr, rr):
+    '''
+    new method with tape TR (area is total projection area)
+    
+    '''
+    etar = 0
+    pO = [0, 0]
+    pA = [0, 1]
+    pB = [0, 1 * (1 + rr)]
+    half_span = 0.25 * ar * (1 + tr + rr * etak)
+    dO1B1 = etar + tr * (1 - etar) + rr * (etak - etar) / etak
+    dDE   = etak + tr * (1 - etak)
+    pO1 = [half_span*etar, -half_span*etar * np.tan(sa0 / DEGREE)]
+    pB1 = [half_span*etar, -half_span*etar * np.tan(sa0 / DEGREE) + dO1B1]
+    pD  = [half_span*etak, -half_span*etak * np.tan(sa0 / DEGREE)]
+    pE  = [half_span*etak, -half_span*etak * np.tan(sa0 / DEGREE) + dDE]
+    pF  = [half_span, -half_span * np.tan(sa0 / DEGREE)]
+    pG  = [half_span, -half_span * np.tan(sa0 / DEGREE) + tr]
+
+    ax.plot(*points2line(pO, pF), c='k', ls='-')
+    ax.plot(*points2line(pA, pG), c='k', ls='-')
+    ax.plot(*points2line(pO, pB), c='k', ls='-')
+    ax.plot(*points2line(pD, pE), c='k', ls='--')
+    ax.plot(*points2line(pB, pE), c='k', ls='-')
+    ax.fill_between([pB1[0], pE[0], pG[0]], [pO1[1], pD[1], pF[1]], [pB1[1], pE[1], pG[1]])
 
     ax.set_aspect('equal')
 
