@@ -1331,43 +1331,45 @@ class adflow():
             zoneName = ctypes.create_string_buffer(512)
             tmp = (ctypes.c_int * 9)(*[0 for _ in range(9)])
             
+            # read solution shape
+            # Caution: ADflow save coordinates at grid vortex, but solution at grid center. The shapes are in a list with formatted as:
+            # [coordinate shape (length = cellDim), solution shape (length = cellDim), 0 ...] 
             self.lib.cg_zone_read(cg, base, iBlock, zoneName, tmp, ier)
-            dims = np.ctypeslib.as_array(tmp, shape=(9,))[:3]
-            
-            if cellDim.value == 2:
-                dims[2] = 1
+            dims = np.ctypeslib.as_array(tmp, shape=(9,))
+            dimsCoord = copy.deepcopy(dims[:3])
+            dimsSol   = copy.deepcopy(dims[cellDim.value: cellDim.value+3])
+            if cellDim.value == 2: dimsCoord[2] = 1; dimsSol[2] = 1
                 
-            if readType[0] == '1': print(f' > [BLOCK #{iBlock:2d}] {zoneName.value.decode("utf-8")} dims = {dims[::-1]}')
+            if readType[0] == '1': print(f' > [BLOCK #{iBlock:2d}] {zoneName.value.decode("utf-8")} coord / sol dims = {dimsCoord[::-1]} / {dimsSol[::-1]}')
             
-            blockStart  = (ctypes.c_int * 3)(*[1, 1, 1])
-            blockEnd    = (ctypes.c_int * 3)(*dims)
+            blockStart    = (ctypes.c_int * 3)(*[1, 1, 1])
+            blockEndCoord = (ctypes.c_int * 3)(*dimsCoord)
+            blockEndSol   = (ctypes.c_int * 3)(*dimsSol)
             
             blockData = []
             
             if readType[1] == '1':
-                
+                # read coordinates
                 coord = []
                 for varName in [b'CoordinateX', b'CoordinateY', b'CoordinateZ']:
-                    tmpCoordptr = np.zeros(dims, dtype=np.float64).ctypes.data_as(ctypes.POINTER(ctypes.c_double))
-                    ierr = self.lib.cg_coord_read(cg, base, iBlock, varName, realType, blockStart, blockEnd, tmpCoordptr)
+                    tmpCoordptr = np.zeros(dimsCoord, dtype=np.float64).ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                    ierr = self.lib.cg_coord_read(cg, base, iBlock, varName, realType, blockStart, blockEndCoord, tmpCoordptr)
                     assert ierr == 0, f'cg_coord_read return: "{self.readErrMess()}"'
                     
-                    coord.append(np.ctypeslib.as_array(tmpCoordptr, shape=(dims[2], dims[1], dims[0])))
+                    coord.append(np.ctypeslib.as_array(tmpCoordptr, shape=tuple(dimsCoord[::-1])))
                 
                 blockData.append(np.array(coord))
 
             if readType[2] == '1':
-                
+                # read solution
                 sol = []
                 for varName in varNames:
-            
                     cgnsVarName = varName.encode('utf-8')
-                    
-                    tmpSolptr = np.zeros(dims, dtype=np.float64).ctypes.data_as(ctypes.POINTER(ctypes.c_double))
-                    ierr = self.lib.cg_field_read(cg, base, iBlock, 1, cgnsVarName, realType, blockStart, blockEnd, tmpSolptr)
+                    tmpSolptr = np.zeros(dimsSol, dtype=np.float64).ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+                    ierr = self.lib.cg_field_read(cg, base, iBlock, 1, cgnsVarName, realType, blockStart, blockEndSol, tmpSolptr)
                     assert ierr == 0, f'cg_field_read return: "{self.readErrMess()}"'
                     
-                    sol.append(np.ctypeslib.as_array(tmpSolptr, shape=(dims[2], dims[1], dims[0])))
+                    sol.append(np.ctypeslib.as_array(tmpSolptr, shape=tuple(dimsSol[::-1])))
                    
                 blockData.append(np.array(sol))
             
