@@ -81,29 +81,37 @@ class BasicWing():
         # self.tail_blocks = []
         # self.tip_blocks = []    
 
-    def calc_planform(self):
+    def calc_planform(self, force: bool = False):
         '''
-        Calculate halfspan and refarea (projection area)
+        Calculate geometric parameters from grid data
+        - halfspan and refarea (projection area)
+        - self.leads, self.tails
+        - self.chords
+        - self.twists
+        
+        param:
+        ===
+        `force`: replace the value with calculated from grid data, even if it exist
         
         '''
         blk = self.surface_blocks[0]
         z = blk[:, 0, 2]
-        self.g['half_span'] = max(z)
+        
+        if force or 'half_span' not in self.g.keys():
+            self.g['half_span'] = max(z)
 
-        x = np.max(blk[:, :, 0], axis=1) - np.min(blk[:, :, 0], axis=1)
-        y = blk[:, 0, 1]
-        self.g['ref_area'] = np.sum(0.5 * (x[:-1] + x[1:]) * (y[1:] - y[:-1]))
+        if force or 'ref_area' not in self.g.keys():
+            x = np.max(blk[:, :, 0], axis=1) - np.min(blk[:, :, 0], axis=1)
+            y = blk[:, 0, 1]
+            self.g['ref_area'] = np.sum(0.5 * (x[:-1] + x[1:]) * (z[1:] - z[:-1]))
 
-    @property
-    def leading_edge_index(self):
-        return np.argmin(self.surface_blocks[0][0, :, 0])
+        iLE = self.leading_edge_index
+        data = copy.deepcopy(blk[:, :, :3]) # nz, nx, 3
 
-    @property
-    def cf_expanded(self):
-        '''
-        check whether the cf_normal and cf_tau is calculated and stored in surface_blocks[0][:, :, 17 and 18]
-        '''
-        return len(self.surface_blocks[0][0, 0]) > 17 and self.surface_blocks[0][:, :, 17].any() != 0.
+        self.leads = copy.deepcopy(data[:, iLE])
+        self.tails = copy.deepcopy(0.5 * (data[:, 0] + data[:, -1])) # nz, 3
+        self.chords = np.linalg.norm(self.tails - self.leads, axis=1) # nz`
+        self.twists = np.arctan2((self.tails - self.leads)[:, 1], (self.tails - self.leads)[:, 0]) / np.pi * 180
 
     @property
     def geometry(self):
@@ -239,28 +247,25 @@ class BasicWing():
 
         from cst_modeling.basic import rotate
 
-        iLE = 160
         data = copy.deepcopy(self.surface_blocks[0][:, :, :3]) # nz, nx, 3
         nz, nx, _ = data.shape
-        leads = copy.deepcopy(data[:, iLE])
-        tails = copy.deepcopy(0.5 * (data[:, 0] + data[:, -1])) # nz, 3
-        chords = np.linalg.norm(tails - leads, axis=1) # nz`
-        twists = np.arctan2((tails - leads)[:, 1], (tails - leads)[:, 0]) / np.pi * 180
-        alphas = self.g['AoA'] - twists
+        self.calc_planform()
+        alphas = self.g['AoA'] - self.twists
         thicks = self.g['root_thickness'] * (1. - (1. - self.g['tip2root_thickness_ratio']) * np.linspace(0, 1, nz))
         
-        elements = (leads.transpose(), alphas[np.newaxis, :], chords[np.newaxis, :], thicks[np.newaxis, :], 
+        elements = (self.leads.transpose(), alphas[np.newaxis, :], self.chords[np.newaxis, :], thicks[np.newaxis, :], 
                         np.tile(self.g['cstu'][0][:, np.newaxis], (1, nz)), np.tile(self.g['cstl'][0][:, np.newaxis], (1, nz)),
                         np.tile(np.array([self.g['Mach']])[:, np.newaxis], (1, nz)))
         #     print([a.shape for a in elements])
         deltaindexs  = np.concatenate(elements, axis=0).transpose()  # Ma
-        normal_geom = (data - leads[:, np.newaxis, :]) / chords[:, np.newaxis, np.newaxis]
+        normal_geom = (data - self.leads[:, np.newaxis, :]) / self.chords[:, np.newaxis, np.newaxis]
 
         for iz in range(nz):
-            normal_geom[iz] = np.stack(rotate(normal_geom[iz, :, 0], normal_geom[iz, :, 1], normal_geom[iz, :, 2], -twists[iz], axis='Z')).transpose()
+            normal_geom[iz] = np.stack(rotate(normal_geom[iz, :, 0], normal_geom[iz, :, 1], normal_geom[iz, :, 2], - self.twists[iz], axis='Z')).transpose()
 
         return deltaindexs, normal_geom.transpose((0, 2, 1))
-        
+    
+    '''
     def check(self):
         import copy
         data = self.get_formatted_surface()
@@ -280,6 +285,7 @@ class BasicWing():
                 plt.plot(data[i, :, 0], data[i, :, 1])
                 plt.plot(data1[i, :, 0], data1[i, :, 1])
                 plt.savefig('123.png')
+    ''' 
     
     def section_surface_distribution(self, y=None, eta=None, norm=False):
 
