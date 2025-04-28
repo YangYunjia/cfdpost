@@ -82,14 +82,14 @@ def get_dxyforce_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None) -> np
 
     dr     = (geom[1:] - geom[:-1])
     dfp_n  = cp.reshape((1, -1))
-    if cf is None or len(cf.shape) > 1:
+    if cf is None:
         dfv_t  = np.zeros_like(dfp_n)
     else:
         dfv_t = cf.reshape((1, -1))
 
     dxy = np.einsum('lj,lpk,jk->jp', np.concatenate((dfv_t, -dfp_n), axis=0), _rot_metrix, dr)
 
-    if len(cf.shape) > 1: dxy += np.abs(dr) * cf
+    # if len(cf.shape) > 1: dxy += np.abs(dr) * cf
     
     return dxy
 

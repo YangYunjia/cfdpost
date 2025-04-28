@@ -15,7 +15,7 @@ from cst_modeling.section import cst_foil
 from cst_modeling.basic import rotate
 
 from typing import List, Union
-from cfdpost.utils import DEGREE, _xy_2_cl, get_force_1d, get_moment_1d
+from cfdpost.utils import DEGREE, get_force_1d, get_moment_1d, get_force_2d, get_moment_2d
 
 #* auxilary functions
 def _swept_angle(chord: float, sa0: float, ar: float, tr: float) -> float:
@@ -57,7 +57,7 @@ def reconstruct_surface_frame(nx: int, cst_us: List[np.ndarray], cst_ls: List[np
 
 class BasicWing():
     
-    def __init__(self, paras: dict = None, aoa: float = None):
+    def __init__(self, paras: dict = None, aoa: float = None, iscentric: bool = False):
         
         self.g = {}                 # geometric parameters dictionary
                                     # for calculating lift distribution, `half_span` and `ref_area` are required
@@ -75,6 +75,8 @@ class BasicWing():
         
         if aoa is not None:
             self.aoa = aoa
+            
+        self.cen = iscentric
 
     def _init_blocks(self):
         self.surface_blocks = []
@@ -114,6 +116,17 @@ class BasicWing():
         self.twists = np.arctan2((self.tails - self.leads)[:, 1], (self.tails - self.leads)[:, 0]) / np.pi * 180
 
     @property
+    def leading_edge_index(self):
+        return np.argmin(self.surface_blocks[0][0, :, 0])
+
+    @property
+    def cf_expanded(self):
+        '''
+        check whether the cf_normal and cf_tau is calculated and stored in surface_blocks[0][:, :, 17 and 18]
+        '''
+        return len(self.surface_blocks[0][0, 0]) > 17 and self.surface_blocks[0][:, :, 17].any() != 0.
+
+    @property
     def geometry(self):
         '''
         Nz, Nx, Nv
@@ -134,6 +147,10 @@ class BasicWing():
             - N_V = 3:  cp, cftau, cfz, will be set to V9, V17, V16 (in old version, V9, V15, V17)
         - `isnormed`:   if `True`, cftau & cfz will be divided by 250, 200, respectively
             the non-dim factors was wrong to 200, 250
+        - `isxyz`:      if `True`, the input N_V should be 4, and VARS are Cp, Cfx, Cfy, Cfz; they will be automaticly
+                        transformed to Cftau and Cfnormal
+        - `isinitg`:    if `True`, force to replace half_span and ref_area with grid data, else only fill them if they
+                        are not exists in the existing `self.g`
         
         '''
         if geometry is not None:
@@ -141,33 +158,35 @@ class BasicWing():
             new_block = np.zeros((geometry.shape[1], geometry.shape[2], 19))
             new_block[:, :, 0:3]    = geometry.transpose((1, 2, 0))
             self.surface_blocks.append(new_block)
-            if isinitg: self.calc_planform()
+            self.calc_planform(force=isinitg)
+        
+        r = -1 if self.cen else None
         
         if data is not None:
             blk = self.surface_blocks[0]
             if data.shape[0] == 1:
-                blk[:, :, 9]      = data[0]
+                blk[:r, :r, 9]      = data[0]
             elif data.shape[0] == 2:
                 if isxyz: raise RuntimeError('read_formatted_surface get 2 channel data, which can not be CFX, CFY, CFZ')
-                blk[:, :, 9]      = data[0]
-                blk[:, :, 17]     = data[1] / (1, 250)[isnormed] # cftau
+                blk[:r, :r, 9]      = data[0]
+                blk[:r, :r, 17]     = data[1] / (1, 250)[isnormed] # cftau
             elif data.shape[0] == 3:
                 if isxyz: raise RuntimeError('read_formatted_surface get 3 channel data, which can not be CFX, CFY, CFZ')
-                blk[:, :, 9]      = data[0]
-                blk[:, :, 16]     = data[2] / (1, 200)[isnormed] # cfz
-                blk[:, :, 17]     = data[1] / (1, 250)[isnormed] # cftau
+                blk[:r, :r, 9]      = data[0]
+                blk[:r, :r, 16]     = data[2] / (1, 200)[isnormed] # cfz
+                blk[:r, :r, 17]     = data[1] / (1, 250)[isnormed] # cftau
             # fsw dataset format
             elif data.shape[0] == 4:
-                blk[:, :, 9]      = data[0]
+                blk[:r, :r, 9]      = data[0]
                 
                 if isxyz:
                     if isnormed: raise RuntimeError('CFX, CFY, CFZ can not be normalized')
-                    blk[:, :, 14:17]     = np.transpose(data[1:4], (1, 2, 0)) # cfx, y, z
+                    blk[:r, :r, 14:17]     = np.transpose(data[1:4], (1, 2, 0)) # cfx, y, z
                     self._get_normal_cf()
                 else:  
-                    blk[:, :, 16]     = data[1] / (1, 200)[isnormed] # cfz
-                    blk[:, :, 17]     = data[2] / (1, 250)[isnormed] # cftau
-                    blk[:, :, 18]     = data[3] # cfnor
+                    blk[:r, :r, 16]     = data[1] / (1, 200)[isnormed] # cfz
+                    blk[:r, :r, 17]     = data[2] / (1, 250)[isnormed] # cftau
+                    blk[:r, :r, 18]     = data[3] # cfnor
 
     def _get_normal_cf(self):
         '''
@@ -191,9 +210,13 @@ class BasicWing():
 
         xz = np.take(blk, [0, 1], axis=2)
         tangens = np.zeros_like(xz)
-        tangens[:, 1:-1] = xz[:, 2:] - xz[:, :-2]
-        tangens[:, 0]    = xz[:, 1]  - xz[:, 0]
-        tangens[:, -1]   = xz[:, -1] - xz[:, -2]
+        if self.cen:
+            tangens[:, :-1] = xz[:, 1:] - xz[:, :-1]
+        else:
+            # grid centric
+            tangens[:, 1:-1] = xz[:, 2:] - xz[:, :-2]
+            tangens[:, 0]    = xz[:, 1]  - xz[:, 0]
+            tangens[:, -1]   = xz[:, -1] - xz[:, -2]
         tangens = tangens / ((np.sum(tangens**2, axis=2, keepdims=True))**0.5 + 1e-20)
         normals = np.zeros_like(tangens)
         normals[:, :, 0] = -tangens[:, :, 1]
@@ -201,6 +224,9 @@ class BasicWing():
         cfxz = np.take(blk, [14, 15], axis=2)
         cftg = np.einsum('ijk,ijk->ij', tangens, cfxz)
         cfnm = np.einsum('ijk,ijk->ij', normals, cfxz)
+        
+        # cftg = (blk[:, :, 14]**2 + blk[:, :, 15]**2)**0.5 * np.sign(blk[:, :, 14])
+        # cfnm = np.zeros_like(cftg)
 
         if self.surface_blocks[0].shape[2] == 19:
             self.surface_blocks[0][:, :, 17:19] = np.dstack((cftg, cfnm))
@@ -217,7 +243,7 @@ class BasicWing():
             self._get_normal_cf()
         return self.surface_blocks[0][:, :, 17]
         
-    def get_formatted_surface(self):
+    def get_formatted_surface(self, keep_cen: bool = True):
         '''
         get formatted surface data for model training
 
@@ -234,9 +260,12 @@ class BasicWing():
         '''
         if not self.cf_expanded:
             self._get_normal_cf()
-
+            
+        if not keep_cen:  raise NotImplementedError()
+        r = -1 if self.cen else None
+        
         blk = self.surface_blocks[0]
-        data = np.take(blk, [0, 1, 2, 9, 17, 16], axis=2)
+        data = blk[:r, :r, [0, 1, 2, 9, 17, 16]]
         return data
 
     def get_normalized_sectional_geom(self):
@@ -287,46 +316,72 @@ class BasicWing():
                 plt.savefig('123.png')
     ''' 
     
+    def aero_force(self):
+        blk = self.surface_blocks[0]
+        
+        if self.cen:
+            r = -1
+        else:
+            raise NotImplementedError()
+        
+        self.cl = np.zeros((3,))
+        forces  = get_force_2d(geom=blk[:, :, :3], aoa=self.aoa, cp=blk[:r, :r, 9], cf=blk[:r, :r, 14:17]) / self.g['ref_area']
+        moments = get_moment_2d(geom=blk[:, :, :3], cp=blk[:r, :r, 9], cf=blk[:r, :r, 14:17]) / self.g['ref_area']
+        
+        self.cl[1], self.cl[0], _ = forces
+        _, _, self.cl[2]          = moments
+        
+        return forces, moments
+    
     def section_surface_distribution(self, y=None, eta=None, norm=False):
 
         return interpolate_section(self.surface_blocks[0], y=y, eta=eta, norm=norm)
         
-    def lift_distribution(self, vis: bool = True):
-        blk = self.surface_blocks[0]
-        y = blk[:, 0, 2]
-        cl = np.zeros((blk.shape[0]))
-        cd = np.zeros((blk.shape[0]))
-        cmz = np.zeros((blk.shape[0]))
-
-        self.cl = np.zeros((3,))
-
-        if vis:
-            cftg = self.cf_normal
-        else:
-            cftg = np.zeros_like(blk[:, :, 0])
-
-        for i in range(blk.shape[0]-1):
-            cd[i], cl[i] = get_force_1d(blk[i, :, 0:2], self.aoa, blk[i, :, 9], cftg[i])
-            cmz[i] = get_moment_1d(blk[i, :, 0:2], blk[i, :, 9], cftg[i])
-            self.cl += np.array([cl[i], cd[i], cmz[i]]) * (y[i+1] - y[i]) * 0.5 / self.g['ref_area']
-            if i > 0: 
-                self.cl += np.array([cl[i], cd[i], cmz[i]]) * (y[i] - y[i-1]) * 0.5 / self.g['ref_area']
-
-        self.cl_curve = (y, cl, cd, cmz)
-        return y, cl, cd, cmz
-    
-    def sectional_lift_distribution(self):
-
-        if self.cl_curve is None:
-            self.lift_distribution()
+    def lift_distribution(self, vis: int = 1, keep_cen: bool = True):
         
-        y, cl, cd, cmz = copy.deepcopy(self.cl_curve)
-        for i in range(len(y)):
-            cl[i] /= self.sectional_chord(y[i])
-            cd[i] /= self.sectional_chord(y[i])
-            cmz[i] /= self.sectional_chord(y[i])
+        if not keep_cen:  raise NotImplementedError()
+        
+        blk = self.surface_blocks[0]
+        r = -1 if self.cen else None
+        blk_n = 0.5 * (blk[:-1, 1:] + blk[:-1, :-1]) if self.cen else blk
+        
+        span_distributions = np.zeros((4, blk_n.shape[0]))
+        span_distributions[0] = blk_n[:, 0, 2] if self.cen else blk[:, 0, 2]
+        forces = np.zeros((3,))
 
-        return y, cl, cd, cmz
+        if vis == 0:
+            cftg = np.zeros_like(blk_n[..., 0])
+        # elif vis == -1:
+        #     cftg = blk[:, :, 14:16]
+        else:
+            cftg = blk_n[..., 17]
+
+        for i in range(blk_n.shape[0]):
+
+            cd, cl = get_force_1d(blk[i, :, 0:2], self.aoa, blk_n[i, :, 9], cftg[i, :])
+            cmz    = get_moment_1d(blk[i, :, 0:2], blk_n[i, :, 9], cftg[i, :])
+            span_distributions[1:, i] = np.array([cl, cd, cmz])
+        
+        if not self.cen:
+            for i in range(blk.shape[0] - 1):
+                y, cl, cd, cmz = span_distributions[:, i]
+                forces += np.array([cl, cd, cmz]) * (y[i+1] - y[i]) * 0.5
+                if i > 0: 
+                    forces += np.array([cl, cd, cmz]) * (y[i] - y[i-1]) * 0.5
+            self.cl = forces
+
+        self.cl_curve = span_distributions
+        return self.cl_curve
+    
+    def sectional_lift_distribution(self, vis: bool = True):
+
+        self.lift_distribution(vis=vis)
+
+        c = 0.5 * (self.chords[1:] + self.chords[:-1]) if self.cen else self.chords 
+        cf_n = copy.deepcopy(self.cl_curve)
+        cf_n[1:] /= c[np.newaxis, :]
+
+        return cf_n
     
     def sectional_chord_eta(self, eta: Union[float, np.ndarray]):
         return 1 - (1 - self.g['tapper_ratio']) * eta
