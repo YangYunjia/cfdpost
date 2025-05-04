@@ -262,10 +262,9 @@ class BasicWing():
             self._get_normal_cf()
             
         if not keep_cen:  raise NotImplementedError()
-        r = -1 if self.cen else None
         
         blk = self.surface_blocks[0]
-        data = blk[:r, :r, [0, 1, 2, 9, 17, 16]]
+        data = blk[..., [0, 1, 2, 9, 17, 16]]
         return data
 
     def get_normalized_sectional_geom(self):
@@ -381,7 +380,7 @@ class BasicWing():
         cf_n = copy.deepcopy(self.cl_curve)
         cf_n[1:] /= c[np.newaxis, :]
 
-        return cf_n
+        return np.concatenate((cf_n[[0]], c[np.newaxis, :], cf_n[1:]))
     
     def sectional_chord_eta(self, eta: Union[float, np.ndarray]):
         return 1 - (1 - self.g['tapper_ratio']) * eta

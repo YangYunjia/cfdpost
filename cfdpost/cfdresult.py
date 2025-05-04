@@ -1264,6 +1264,10 @@ class cfl3d():
         f.write('\n')
         f.close()
 
+class ADflowError(Exception):
+    
+    def __init__(self, func, msg):
+        super().__init__(f'{func} return: "{msg}"')
 
 class adflow():
     
@@ -1316,7 +1320,7 @@ class adflow():
         realType = ctypes.c_int(4)
 
         ierr = self.lib.cg_open(fileName, mode, ctypes.pointer(cg))
-        assert ierr == 0, f'cg_open return: "{self.readErrMess()}"'
+        if ierr != 0: raise ADflowError('cg_open', self.readErrMess())
         # print(cg.value)
 
         ierr = self.lib.cg_base_read(cg, base, baseName, ctypes.pointer(cellDim), ctypes.pointer(physDim))
@@ -1354,7 +1358,7 @@ class adflow():
                 for varName in [b'CoordinateX', b'CoordinateY', b'CoordinateZ']:
                     tmpCoordptr = np.zeros(dimsCoord, dtype=np.float64).ctypes.data_as(ctypes.POINTER(ctypes.c_double))
                     ierr = self.lib.cg_coord_read(cg, base, iBlock, varName, realType, blockStart, blockEndCoord, tmpCoordptr)
-                    assert ierr == 0, f'cg_coord_read return: "{self.readErrMess()}"'
+                    if ierr != 0: raise ADflowError('cg_coord_read', self.readErrMess())
                     
                     coord.append(np.ctypeslib.as_array(tmpCoordptr, shape=tuple(dimsCoord[::-1])))
                 
@@ -1367,7 +1371,7 @@ class adflow():
                     cgnsVarName = varName.encode('utf-8')
                     tmpSolptr = np.zeros(dimsSol, dtype=np.float64).ctypes.data_as(ctypes.POINTER(ctypes.c_double))
                     ierr = self.lib.cg_field_read(cg, base, iBlock, 1, cgnsVarName, realType, blockStart, blockEndSol, tmpSolptr)
-                    assert ierr == 0, f'cg_field_read return: "{self.readErrMess()}"'
+                    if ierr != 0: raise ADflowError('cg_field_read', self.readErrMess())
                     
                     sol.append(np.ctypeslib.as_array(tmpSolptr, shape=tuple(dimsSol[::-1])))
                    
