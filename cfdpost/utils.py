@@ -146,6 +146,17 @@ def get_force_1d(geom: np.ndarray, aoa: float, cp: np.ndarray, cf: np.ndarray=No
     return _xy_2_cl(dfp, aoa)
 
 def get_cellinfo_1d(geom: np.ndarray, iscentric=False) -> np.ndarray:
+    '''
+    params:
+    ===
+    `geom`:  The geometry (x, y), shape: (..., I, 2)
+
+    returns:
+    ===
+    `tangens`: shape: (..., I-1, 2)
+    `normals`: shape: (..., I-1, 2)
+    # `areas`  : shape: (I-1, J-1)
+    '''
     
     if iscentric:
         # grid centric
@@ -157,7 +168,7 @@ def get_cellinfo_1d(geom: np.ndarray, iscentric=False) -> np.ndarray:
         tangens[:, -1]   = geom[:, -1] - geom[:, -2]
         
     tangens /= (np.linalg.norm(tangens, axis=-1, keepdims=True) + 1e-20)
-    normals = np.stack(-tangens[..., 1], tangens[..., 0], axis=-1)
+    normals = np.concatenate((-tangens[..., [1]], tangens[..., [0]]), axis=-1)
     
     return tangens, normals
 

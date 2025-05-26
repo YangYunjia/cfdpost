@@ -960,20 +960,3 @@ def plot_frame(ax: Axes, sa0, da0, ar, tr, tw, tcr, troot, cst_u, cst_l) -> Axes
     ax.text(0, 2, 0, 'freestream')
 
     return ax
-
-
-if __name__ == '__main__':
-
-    wing_param = {"swept_angle": 0.,
-                  "dihedral_angle": 0., 
-                  "aspect_ratio": 2 * np.pi, 
-                  "tapper_ratio": 1., 
-                  "tip_twist_angle": 0., 
-                  "tip2root_thickness_ratio": 1.}
-    
-    wg = Wing(geometry=wing_param)
-
-    xx = wg.thin_wing()
-    print(xx)
-    dalpha = wg.downwash_angle(np.arange(0.1, 0.9, 0.1), xx)
-    print(dalpha)
