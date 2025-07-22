@@ -65,6 +65,20 @@ def _xy_2_cl(dfp: np.ndarray, aoa: float) -> np.ndarray:
     # print(dfp.size(), _rot_metrix.size(), _aoa_rot(aoa).size())
     return np.einsum('p,prs,s->r', dfp, _rot_metrix, _aoa_rot(aoa))
 
+def _xy_2_cl_t(dfp: np.ndarray, aoa: float) -> np.ndarray:
+    '''
+    transfer fx, fy to CD, CL
+
+    param:
+    dfp:    (Fx, Fy), np.ndarray with size (2,)
+    aoa:    angle of attack, float
+
+    return:
+    ===
+    np.ndarray: (CD, CL)
+    '''
+    # print(dfp.size(), _rot_metrix.size(), _aoa_rot(aoa).size())
+    return np.einsum('pb,prs,s->rb', dfp, _rot_metrix, _aoa_rot(aoa))
 
 #* function to extract pressure force from 1-d pressure profile
 
@@ -145,6 +159,33 @@ def get_force_1d(geom: np.ndarray, aoa: float, cp: np.ndarray, cf: np.ndarray=No
     dfp = get_xyforce_1d(geom, cp, cf)
     return _xy_2_cl(dfp, aoa)
 
+def get_cellinfo_1d(geom: np.ndarray, iscentric=False) -> np.ndarray:
+    '''
+    params:
+    ===
+    `geom`:  The geometry (x, y), shape: (..., I, 2)
+
+    returns:
+    ===
+    `tangens`: shape: (..., I-1, 2)
+    `normals`: shape: (..., I-1, 2)
+    # `areas`  : shape: (I-1, J-1)
+    '''
+    
+    if iscentric:
+        # grid centric
+        tangens = geom[..., 1:, :] - geom[..., :-1, :]
+    else:
+        tangens = np.zeros_like(geom)
+        tangens[:, 1:-1] = geom[:, 2:] - geom[:, :-2]
+        tangens[:, 0]    = geom[:, 1]  - geom[:, 0]
+        tangens[:, -1]   = geom[:, -1] - geom[:, -2]
+        
+    tangens /= (np.linalg.norm(tangens, axis=-1, keepdims=True) + 1e-20)
+    normals = np.concatenate((-tangens[..., [1]], tangens[..., [0]]), axis=-1)
+    
+    return tangens, normals
+
 def get_cellinfo_2d(geom: np.ndarray) -> np.ndarray:
     
     '''
@@ -165,11 +206,16 @@ def get_cellinfo_2d(geom: np.ndarray) -> np.ndarray:
     p3 = geom[1:, :-1]  # NE
 
     # calculate two groups of normal vector and average
-    normals = 0.5 * (np.cross(p1 - p0, p3 - p0) + np.cross(p2 - p1, p0 - p1))
+    # normals = 0.5 * (np.cross(p1 - p0, p3 - p0) + np.cross(p2 - p1, p0 - p1))
+    # normals = 0.5 * (np.cross(p1 - p0, p3 - p0) + np.cross(p3 - p2, p1 - p2))
+    # normals = 0.25 * (np.cross(p1 - p0, p3 - p0) + np.cross(p3 - p2, p1 - p2) + np.cross(p2 - p1, p0 - p1) + np.cross(p0 - p3, p2 - p3))
+    normals = np.cross(p2 - p0, p3 - p1)
+    # areas = 0.5 * np.linalg.norm(np.cross(p2 - p0, p3 - p1), axis=-1)
     areas   = 0.5 * (np.linalg.norm(np.cross(p1 - p0, p2 - p0), axis=-1) + np.linalg.norm(np.cross(p2 - p0, p3 - p0), axis=-1))
 
     # normalization
     normals /= (np.linalg.norm(normals, axis=-1, keepdims=True) + 1e-20)
+    # print(np.sum(normals * areas[..., np.newaxis], axis=(0,1)))
     return normals, areas    
 
 def get_dxyforce_2d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None) -> np.ndarray:
@@ -184,7 +230,7 @@ def get_dxyforce_2d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None) -> np
     n, a = get_cellinfo_2d(geom)
     dfp = cp[..., np.newaxis] * n * a[..., np.newaxis]
     
-    if cf is not None:
+    if not (cf is None or len(cf) == 0):
         dfp += (cf - np.sum(cf * n, axis=-1, keepdims=True) * n) * a[..., np.newaxis]
     
     return dfp
