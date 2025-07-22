@@ -57,7 +57,7 @@ def reconstruct_surface_frame(nx: int, cst_us: List[np.ndarray], cst_ls: List[np
 
 class BasicWing():
     
-    def __init__(self, paras: dict = None, aoa: float = None, iscentric: bool = False):
+    def __init__(self, paras: dict = None, aoa: float = None, iscentric: bool = False, normal_factors=(1, 150, 300)):
         
         self.g = {}                 # geometric parameters dictionary
                                     # for calculating lift distribution, `half_span` and `ref_area` are required
@@ -77,6 +77,7 @@ class BasicWing():
             self.aoa = aoa
             
         self.cen = iscentric
+        self.normal_factors = normal_factors
 
     def _init_blocks(self):
         self.surface_blocks = []
@@ -148,14 +149,14 @@ class BasicWing():
             blk[:r, :r, 9]      = data[0]
         elif data.shape[0] == 2:
             if isxyz: raise RuntimeError('read_formatted_surface get 2 channel data, which can not be CFX, CFY, CFZ')
-            blk[:r, :r, 9]      = data[0]
-            blk[:r, :r, 17]     = data[1] / (1, 250)[isnormed] # cftau
+            blk[:r, :r, 9]      = data[0] / (1, self.normal_factors[0])[isnormed]
+            blk[:r, :r, 17]     = data[1] / (1, self.normal_factors[1])[isnormed] # cftau
         elif data.shape[0] == 3:
             # cftau, cfz, should be transfer to cfxy
             if isxyz: raise RuntimeError('read_formatted_surface get 3 channel data, which can not be CFX, CFY, CFZ')
-            blk[:r, :r, 9]      = data[0]
-            blk[:r, :r, 16]     = data[2] / (1, 200)[isnormed] # cfz
-            blk[:r, :r, 17]     = data[1] / (1, 250)[isnormed] # cftau
+            blk[:r, :r, 9]      = data[0] / (1, self.normal_factors[0])[isnormed]
+            blk[:r, :r, 16]     = data[2] / (1, self.normal_factors[2])[isnormed] # cfz
+            blk[:r, :r, 17]     = data[1] / (1, self.normal_factors[1])[isnormed] # cftau
             self._get_xz_cf(blk)
         # fsw dataset format
         elif data.shape[0] == 4:
@@ -166,8 +167,8 @@ class BasicWing():
                 blk[:r, :r, 14:17]     = np.transpose(data[1:4], (1, 2, 0)) # cfx, y, z
                 self._get_normal_cf(blk)
             else:  
-                blk[:r, :r, 16]     = data[1] / (1, 200)[isnormed] # cfz
-                blk[:r, :r, 17]     = data[2] / (1, 250)[isnormed] # cftau
+                blk[:r, :r, 16]     = data[1] / (1, self.normal_factors[2])[isnormed] # cfz
+                blk[:r, :r, 17]     = data[2] / (1, self.normal_factors[1])[isnormed] # cftau
                 blk[:r, :r, 18]     = data[3] # cfnor
 
     def read_formatted_surface(self, geometry: np.ndarray = None, data: np.ndarray = None, 
@@ -513,9 +514,9 @@ class Wing(BasicWing):
     _format_geometry_indexs_short = ['AoA', 'Mach', 'swept_angle', 'dihedral_angle', 'aspect_ratio', 'tapper_ratio',  
                 'tip_twist_angle', 'tip2root_thickness_ratio']
     
-    def __init__(self, geometry: Union[list, np.ndarray, dict] = None, aoa: float = None) -> None:
+    def __init__(self, geometry: Union[list, np.ndarray, dict] = None, aoa: float = None, normal_factors: tuple = (1, 250, 200)) -> None:
         
-        super().__init__(paras=geometry, aoa=aoa, init_g=False)
+        super().__init__(paras=geometry, aoa=aoa, init_g=False, normal_factors=normal_factors)
         
         if geometry is not None:
             if isinstance(geometry, dict):   self.read_geometry(geometry)
@@ -852,8 +853,8 @@ def _plot_2d_wing(fig: Figure, surface, profile_surface=None, contour=4, vrange=
         for idx in range(len(profile_surface)):
             sec_p = interpolate_section(profile_surface[idx], eta=etas[i])
             ax.plot(sec_p[:, 0], sec_p[:, contour], c=colors[idx], ls=lss[idx])
-            if reverse_y < 0:
-                ax.invert_yaxis()
+        if reverse_y < 0:
+            ax.invert_yaxis()
 
 
 ##################
