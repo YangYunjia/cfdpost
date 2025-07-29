@@ -14,7 +14,7 @@ from matplotlib.gridspec import GridSpec
 from cst_modeling.section import cst_foil
 from cst_modeling.basic import rotate
 
-from typing import List, Union
+from typing import List, Union, Optional
 from cfdpost.utils import DEGREE, get_force_1d, get_moment_1d, get_force_2d, get_moment_2d
 
 #* auxilary functions
@@ -134,7 +134,7 @@ class BasicWing():
         
         return self.surface_blocks[0][:, :, :3]
     
-    def read_formatted_surface(self, geometry: np.ndarray = None, data: np.ndarray = None, 
+    def read_formatted_surface(self, geometry: Optional[np.ndarray] = None, data: Optional[np.ndarray] = None, 
                                isnormed: bool = False, isxyz: bool = False, isinitg: bool = False):
         '''
         read np.ndarray data to the wing
@@ -243,7 +243,7 @@ class BasicWing():
             self._get_normal_cf()
         return self.surface_blocks[0][:, :, 17]
         
-    def get_formatted_surface(self, keep_cen: bool = True):
+    def get_formatted_surface(self, keep_cen: bool = True) -> np.ndarray:
         '''
         get formatted surface data for model training
 
@@ -320,13 +320,17 @@ class BasicWing():
         blk = self.surface_blocks[0]
         
         if self.cen:
-            r = -1
+            cp = blk[:-1, :-1, 9]
+            cf = blk[:-1, :-1, 14:17]
         else:
-            raise NotImplementedError()
+            # interpolate
+            cen_blk = 0.25 * (blk[1:, 1:] + blk[1:, :-1] + blk[:-1, 1:] + blk[:-1, :-1])
+            cp = cen_blk[:, :, 9]
+            cf = cen_blk[:, :, 14:17]
         
         self.cl = np.zeros((3,))
-        forces  = get_force_2d(geom=blk[:, :, :3], aoa=self.aoa, cp=blk[:r, :r, 9], cf=blk[:r, :r, 14:17]) / self.g['ref_area']
-        moments = get_moment_2d(geom=blk[:, :, :3], cp=blk[:r, :r, 9], cf=blk[:r, :r, 14:17]) / self.g['ref_area']
+        forces  = get_force_2d(geom=blk[:, :, :3], aoa=self.aoa, cp=cp, cf=cf) / self.g['ref_area']
+        moments = get_moment_2d(geom=blk[:, :, :3], cp=cp, cf=cf) / self.g['ref_area']
         
         self.cl[1], self.cl[0], _ = forces
         _, _, self.cl[2]          = moments
@@ -479,7 +483,7 @@ class Wing(BasicWing):
     
     def __init__(self, geometry: Union[list, np.ndarray, dict] = None, aoa: float = None) -> None:
         
-        super().__init__(paras=geometry, aoa=aoa, init_g=False)
+        super().__init__(paras=geometry, aoa=aoa)
         
         if geometry is not None:
             if isinstance(geometry, dict):   self.read_geometry(geometry)
