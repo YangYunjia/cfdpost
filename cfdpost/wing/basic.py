@@ -14,7 +14,7 @@ from matplotlib.gridspec import GridSpec
 from cst_modeling.section import cst_foil
 from cst_modeling.basic import rotate
 
-from typing import List, Union
+from typing import List, Union, Optional
 from cfdpost.utils import DEGREE, get_force_1d, get_moment_1d, get_force_2d, get_moment_2d, get_cellinfo_1d
 
 #* auxilary functions
@@ -57,7 +57,7 @@ def reconstruct_surface_frame(nx: int, cst_us: List[np.ndarray], cst_ls: List[np
 
 class BasicWing():
     
-    def __init__(self, paras: dict = None, aoa: float = None, iscentric: bool = False):
+    def __init__(self, paras: dict = None, aoa: float = None, iscentric: bool = False, normal_factors=(1, 150, 300)):
         
         self.g = {}                 # geometric parameters dictionary
                                     # for calculating lift distribution, `half_span` and `ref_area` are required
@@ -77,6 +77,7 @@ class BasicWing():
             self.aoa = aoa
             
         self.cen = iscentric
+        self.normal_factors = normal_factors
 
     def _init_blocks(self):
         self.surface_blocks = []
@@ -148,14 +149,14 @@ class BasicWing():
             blk[:r, :r, 9]      = data[0]
         elif data.shape[0] == 2:
             if isxyz: raise RuntimeError('read_formatted_surface get 2 channel data, which can not be CFX, CFY, CFZ')
-            blk[:r, :r, 9]      = data[0]
-            blk[:r, :r, 17]     = data[1] / (1, 250)[isnormed] # cftau
+            blk[:r, :r, 9]      = data[0] / (1, self.normal_factors[0])[isnormed]
+            blk[:r, :r, 17]     = data[1] / (1, self.normal_factors[1])[isnormed] # cftau
         elif data.shape[0] == 3:
             # cftau, cfz, should be transfer to cfxy
             if isxyz: raise RuntimeError('read_formatted_surface get 3 channel data, which can not be CFX, CFY, CFZ')
-            blk[:r, :r, 9]      = data[0]
-            blk[:r, :r, 16]     = data[2] / (1, 200)[isnormed] # cfz
-            blk[:r, :r, 17]     = data[1] / (1, 250)[isnormed] # cftau
+            blk[:r, :r, 9]      = data[0] / (1, self.normal_factors[0])[isnormed]
+            blk[:r, :r, 16]     = data[2] / (1, self.normal_factors[2])[isnormed] # cfz
+            blk[:r, :r, 17]     = data[1] / (1, self.normal_factors[1])[isnormed] # cftau
             self._get_xz_cf(blk)
         # fsw dataset format
         elif data.shape[0] == 4:
@@ -166,11 +167,11 @@ class BasicWing():
                 blk[:r, :r, 14:17]     = np.transpose(data[1:4], (1, 2, 0)) # cfx, y, z
                 self._get_normal_cf(blk)
             else:  
-                blk[:r, :r, 16]     = data[1] / (1, 200)[isnormed] # cfz
-                blk[:r, :r, 17]     = data[2] / (1, 250)[isnormed] # cftau
+                blk[:r, :r, 16]     = data[1] / (1, self.normal_factors[2])[isnormed] # cfz
+                blk[:r, :r, 17]     = data[2] / (1, self.normal_factors[1])[isnormed] # cftau
                 blk[:r, :r, 18]     = data[3] # cfnor
 
-    def read_formatted_surface(self, geometry: np.ndarray = None, data: np.ndarray = None, 
+    def read_formatted_surface(self, geometry: Optional[np.ndarray] = None, data: Optional[np.ndarray] = None, 
                                isnormed: bool = False, isxyz: bool = False, isinitg: bool = False):
         '''
         read np.ndarray data to the wing
@@ -229,8 +230,9 @@ class BasicWing():
         r = -1 if self.cen else None
 
         tangens, normals = get_cellinfo_1d(np.take(blk, [0, 1], axis=2), iscentric=self.cen)
-        tangens = 0.5 * (tangens[1:] + tangens[:-1])    # transfer to cell centre at spanwise direction
-        normals = 0.5 * (normals[1:] + normals[:-1])
+        if self.cen:
+            tangens = 0.5 * (tangens[1:] + tangens[:-1])    # transfer to cell centre at spanwise direction
+            normals = 0.5 * (normals[1:] + normals[:-1])
         
         cf2d = np.take(blk[:r, :r], [14, 15], axis=2)
         cftg = np.sum(cf2d * tangens, axis=-1)
@@ -251,7 +253,10 @@ class BasicWing():
         r = -1 if self.cen else None
         
         tangens, normals = get_cellinfo_1d(np.take(blk, [0, 1], axis=2), iscentric=self.cen)
-        blk[:, :r, [14, 15]] = blk[:, :r, [17]] * tangens + blk[:r, :r, [18]] * normals
+        if self.cen:
+            tangens = 0.5 * (tangens[1:] + tangens[:-1])    # transfer to cell centre at spanwise direction
+            normals = 0.5 * (normals[1:] + normals[:-1])
+        blk[:r, :r, [14, 15]] = blk[:r, :r, [17]] * tangens + blk[:r, :r, [18]] * normals
 
     @property
     def cf_normal(self):
@@ -259,7 +264,7 @@ class BasicWing():
             self._get_normal_cf(self.surface_blocks[0])
         return self.surface_blocks[0][:, :, 17]
         
-    def get_formatted_surface(self, keep_cen: bool = True):
+    def get_formatted_surface(self, keep_cen: bool = True) -> np.ndarray:
         '''
         get formatted surface data for model training
 
@@ -333,10 +338,23 @@ class BasicWing():
     
     def aero_force(self, vis=-1):
         
-        if self.cen:
-            r = -1
+        def get_blk(blk):
+            if self.cen:
+                cp = blk[:-1, :-1, 9]
+                cf = blk[:-1, :-1, 14:17]
+            else:
+                # interpolate
+                cen_blk = 0.25 * (blk[1:, 1:] + blk[1:, :-1] + blk[:-1, 1:] + blk[:-1, :-1])
+                cp = cen_blk[:, :, 9]
+                cf = cen_blk[:, :, 14:17]
+            return blk, cp, cf
+        
+        if vis == -1:
+            cf_sel = [14, 15, 16]
+        elif vis == 0:
+            cf_sel = []
         else:
-            raise NotImplementedError()
+            cf_sel = [17, 16]
         
         if vis == -1:
             cf_sel = [14, 15, 16]
@@ -347,14 +365,14 @@ class BasicWing():
         
         self.cl = np.zeros((3,))
         
-        blk = self.surface_blocks[0]
-        forces  = get_force_2d(geom=blk[:, :, :3], aoa=self.aoa, cp=blk[:r, :r, 9], cf=blk[:r, :r, cf_sel])
-        moments = get_moment_2d(geom=blk[:, :, :3], cp=blk[:r, :r, 9], cf=blk[:r, :r, cf_sel])
+        blk, cp, cf = get_blk(self.surface_blocks[0])
+        forces  = get_force_2d(geom=blk[:, :, :3], aoa=self.aoa, cp=cp, cf=cf)
+        moments = get_moment_2d(geom=blk[:, :, :3], cp=cp, cf=cf)
         
         if self.tip_blocks is not None:
-            blk = self.tip_blocks
-            forces_tip = get_force_2d(geom=blk[:, :, :3], aoa=self.aoa, cp=blk[:r, :r, 9], cf=blk[:r, :r, cf_sel])
-            moments_tip = get_moment_2d(geom=blk[:, :, :3], cp=blk[:r, :r, 9], cf=blk[:r, :r, cf_sel])
+            blk, cp, cf = get_blk(self.tip_blocks)
+            forces_tip = get_force_2d(geom=blk[:, :, :3], aoa=self.aoa, cp=cp, cf=cf)
+            moments_tip = get_moment_2d(geom=blk[:, :, :3], cp=cp, cf=cf)
             # print(forces, forces_tip)
             
             forces += forces_tip
@@ -509,9 +527,9 @@ class Wing(BasicWing):
     _format_geometry_indexs_short = ['AoA', 'Mach', 'swept_angle', 'dihedral_angle', 'aspect_ratio', 'tapper_ratio',  
                 'tip_twist_angle', 'tip2root_thickness_ratio']
     
-    def __init__(self, geometry: Union[list, np.ndarray, dict] = None, aoa: float = None) -> None:
+    def __init__(self, geometry: Union[list, np.ndarray, dict] = None, aoa: float = None, normal_factors: tuple = (1, 250, 200)) -> None:
         
-        super().__init__(paras=geometry, aoa=aoa, init_g=False)
+        super().__init__(paras=geometry, aoa=aoa, init_g=False, normal_factors=normal_factors)
         
         if geometry is not None:
             if isinstance(geometry, dict):   self.read_geometry(geometry)
@@ -848,8 +866,8 @@ def _plot_2d_wing(fig: Figure, surface, profile_surface=None, contour=4, vrange=
         for idx in range(len(profile_surface)):
             sec_p = interpolate_section(profile_surface[idx], eta=etas[i])
             ax.plot(sec_p[:, 0], sec_p[:, contour], c=colors[idx], ls=lss[idx])
-            if reverse_y < 0:
-                ax.invert_yaxis()
+        if reverse_y < 0:
+            ax.invert_yaxis()
 
 
 ##################
