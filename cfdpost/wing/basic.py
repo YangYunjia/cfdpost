@@ -18,9 +18,6 @@ from typing import List, Union, Optional
 from cfdpost.utils import DEGREE, get_force_1d, get_moment_1d, get_force_2d, get_moment_2d, get_cellinfo_1d
 
 #* auxilary functions
-def _swept_angle(chord: float, sa0: float, ar: float, tr: float) -> float:
-    return math.atan(math.tan(sa0 / DEGREE) + chord * 4 * (tr - 1) / (ar * (1 + tr))) * DEGREE
-
 def reconstruct_surface_frame(nx: int, cst_us: List[np.ndarray], cst_ls: List[np.ndarray], ts: List[float], 
                               g: dict, tail:float = 0.004):
     '''
@@ -56,6 +53,17 @@ def reconstruct_surface_frame(nx: int, cst_us: List[np.ndarray], cst_ls: List[np
     return xxs, yys
 
 class BasicWing():
+    '''
+    This class only deal with surface pressure / friction distributions, and doesn't deal with particule the 
+    shape parameters i.e., tapper ratio, aspect ratio and so on. This means every output given by this class
+    rely only on the distributed data. (i.e., the chords are calculated from measuring the distance between 
+    LE to TE, rather to get from TR)
+
+    The geometry parameters only include:
+    - half_span
+    - ref_area
+    
+    '''
     
     def __init__(self, paras: dict = None, aoa: float = None, iscentric: bool = False, normal_factors=(1, 150, 300)):
         
@@ -209,6 +217,60 @@ class BasicWing():
                 self._read_formatted_surface_data(data[0], self.surface_blocks[0], isnormed, isxyz)
                 self._read_formatted_surface_data(data[1], self.tip_blocks, isnormed, isxyz)
 
+    
+    def read_prt(self, path, mode='surf'):
+        '''
+
+        
+        ```text
+        LE1
+        -----
+             -------   LE2
+                     ---|
+        --------        |
+        TE1      -------|
+                       TE2
+
+        y
+        .--> z
+        |
+        x
+        ```
+
+        `self.surface_blocks`:  `list of np.ndarray`
+            the dims of `ndarray`: (i_sec (y) x i_foil (xz) x i_variable(17 or 19))
+                
+                
+        variables:
+        ```text
+        X, Y, Z, U_X, U_Y, U_Z, P, T, M, CP, MUT, DIS, CH, YPLUS, CF_X, CF_Y, CF_Z, (CF_TAU, CF_NOR)
+        0  1  2    3    4    5  6  7  8   9   10   11  12     13    14    15    16  (    17      18)
+        ```
+        '''
+
+        #! this part is not unversial, only for simple wing grid
+        self._init_blocks()
+        if mode == 'surf':
+            xy, qq = cfl3d.readsurf2d(path)
+            blocks = [np.concatenate((xy[i], qq[i]), axis=3) for i in range(len(xy))]
+        else:
+            block_p, block_v = cfl3d.readprt(path)
+            blocks = [np.concatenate((block_p[i], block_v[i]), axis=3) for i in range(len(block_p))]
+
+        n_sec = int(len(blocks) / 2)
+
+        _surface_blocks = []
+
+        for i_sec in range(n_sec):
+            _surface_blocks.append(blocks[2 * i_sec][int(i_sec > 0):, :, 0])
+            # self.tail_blocks.append(blocks[i_sec+1])
+            # self.tip_blocks.append(blocks[i_sec+2])
+        self.surface_blocks.append(np.concatenate(_surface_blocks))
+        # sectional_1 = self.surface_blocks[0][0, :]
+        # sectional_2 = self.surface_blocks[-1][-1, :]
+
+        # print(self.surface_blocks[0].shape)
+
     def _get_normal_cf(self, blk):
         '''
         calculate the cf_normal and cf_tangent
@@ -287,32 +349,6 @@ class BasicWing():
         blk = self.surface_blocks[0]
         data = blk[..., [0, 1, 2, 9, 17, 16]]
         return data
-
-    def get_normalized_sectional_geom(self):
-        '''
-        
-        normal_geom: nz, 3, nx
-        '''
-
-        from cst_modeling.basic import rotate
-
-        data = copy.deepcopy(self.surface_blocks[0][:, :, :3]) # nz, nx, 3
-        nz, nx, _ = data.shape
-        self.calc_planform()
-        alphas = self.g['AoA'] - self.twists
-        thicks = self.g['root_thickness'] * (1. - (1. - self.g['tip2root_thickness_ratio']) * np.linspace(0, 1, nz))
-        
-        elements = (self.leads.transpose(), alphas[np.newaxis, :], self.chords[np.newaxis, :], thicks[np.newaxis, :], 
-                        np.tile(self.g['cstu'][0][:, np.newaxis], (1, nz)), np.tile(self.g['cstl'][0][:, np.newaxis], (1, nz)),
-                        np.tile(np.array([self.g['Mach']])[:, np.newaxis], (1, nz)))
-        #     print([a.shape for a in elements])
-        deltaindexs  = np.concatenate(elements, axis=0).transpose()  # Ma
-        normal_geom = (data - self.leads[:, np.newaxis, :]) / self.chords[:, np.newaxis, np.newaxis]
-
-        for iz in range(nz):
-            normal_geom[iz] = np.stack(rotate(normal_geom[iz, :, 0], normal_geom[iz, :, 1], normal_geom[iz, :, 2], - self.twists[iz], axis='Z')).transpose()
-
-        return deltaindexs, normal_geom.transpose((0, 2, 1))
     
     '''
     def check(self):
@@ -337,31 +373,27 @@ class BasicWing():
     ''' 
     
     def aero_force(self, vis=-1):
+        '''
+        integral of aerodynamic forces from geometry and pressure / friction distribution
         
+        '''
         def get_blk(blk):
+            if vis == -1:
+                cf_sel = [14, 15, 16]
+            elif vis == 0:
+                cf_sel = []
+            else:
+                cf_sel = [17, 16]
+
             if self.cen:
                 cp = blk[:-1, :-1, 9]
-                cf = blk[:-1, :-1, 14:17]
+                cf = blk[:-1, :-1, cf_sel]
             else:
                 # interpolate
                 cen_blk = 0.25 * (blk[1:, 1:] + blk[1:, :-1] + blk[:-1, 1:] + blk[:-1, :-1])
                 cp = cen_blk[:, :, 9]
-                cf = cen_blk[:, :, 14:17]
+                cf = cen_blk[:, :, cf_sel]
             return blk, cp, cf
-        
-        if vis == -1:
-            cf_sel = [14, 15, 16]
-        elif vis == 0:
-            cf_sel = []
-        else:
-            cf_sel = [17, 16]
-        
-        if vis == -1:
-            cf_sel = [14, 15, 16]
-        elif vis == 0:
-            cf_sel = []
-        else:
-            cf_sel = [17, 16]
         
         self.cl = np.zeros((3,))
         
@@ -433,8 +465,8 @@ class BasicWing():
 
         return np.concatenate((cf_n[[0]], c[np.newaxis, :], cf_n[1:]))
     
-    def sectional_chord_eta(self, eta: Union[float, np.ndarray]):
-        return 1 - (1 - self.g['tapper_ratio']) * eta
+    def sectional_chord_eta(self, eta: Union[float, np.ndarray]) -> float:
+        raise NotImplementedError
 
     def sectional_chord(self, y: Union[float, np.ndarray]):
         return self.sectional_chord_eta(y / self.g['half_span'])
@@ -536,6 +568,9 @@ class Wing(BasicWing):
             elif isinstance(geometry, np.ndarray) or isinstance(geometry, list): self.read_formatted_geometry(geometry)
 
     def read_geometry(self, geometry: dict, aoa: float = None):
+        '''
+        read geometry from parameters
+        '''
 
         must_keys = ["swept_angle", "dihedral_angle", "aspect_ratio", "tapper_ratio", "tip_twist_angle", "tip2root_thickness_ratio"]
 
@@ -547,59 +582,6 @@ class Wing(BasicWing):
             self.g['ref_area'] = 0.125 * self.g['aspect_ratio'] * (1 + self.g['tapper_ratio'])**2
         if 'half_span' not in self.g.keys():
             self.g['half_span'] = 0.25 * self.g['aspect_ratio'] * (1 + self.g['tapper_ratio'])
-
-    def read_prt(self, path, mode='surf'):
-        '''
-
-        
-        ```text
-        LE1
-        -----
-             -------   LE2
-                     ---|
-        --------        |
-        TE1      -------|
-                       TE2
-
-        y
-        .--> z
-        |
-        x
-        ```
-
-        `self.surface_blocks`:  `list of np.ndarray`
-            the dims of `ndarray`: (i_sec (y) x i_foil (xz) x i_variable(17 or 19))
-                
-                
-        variables:
-        ```text
-        X, Y, Z, U_X, U_Y, U_Z, P, T, M, CP, MUT, DIS, CH, YPLUS, CF_X, CF_Y, CF_Z, (CF_TAU, CF_NOR)
-        0  1  2    3    4    5  6  7  8   9   10   11  12     13    14    15    16  (    17      18)
-        ```
-        '''
-
-        #! this part is not unversial, only for simple wing grid
-        self._init_blocks()
-        if mode == 'surf':
-            xy, qq = cfl3d.readsurf2d(path)
-            blocks = [np.concatenate((xy[i], qq[i]), axis=3) for i in range(len(xy))]
-        else:
-            block_p, block_v = cfl3d.readprt(path)
-            blocks = [np.concatenate((block_p[i], block_v[i]), axis=3) for i in range(len(block_p))]
-
-        n_sec = int(len(blocks) / 2)
-
-        _surface_blocks = []
-
-        for i_sec in range(n_sec):
-            _surface_blocks.append(blocks[2 * i_sec][int(i_sec > 0):, :, 0])
-            # self.tail_blocks.append(blocks[i_sec+1])
-            # self.tip_blocks.append(blocks[i_sec+2])
-        self.surface_blocks.append(np.concatenate(_surface_blocks))
-        # sectional_1 = self.surface_blocks[0][0, :]
-        # sectional_2 = self.surface_blocks[-1][-1, :]
-
-        # print(self.surface_blocks[0].shape)
 
     def read_formatted_geometry(self, geometry: np.ndarray, aoa: float = None, ftype: float = 0):
         '''
@@ -660,6 +642,10 @@ class Wing(BasicWing):
         '''
         raise NotImplementedError()
 
+    @staticmethod
+    def _swept_angle(chord: float, sa0: float, ar: float, tr: float) -> float:
+        return math.atan(math.tan(sa0 / DEGREE) + chord * 4 * (tr - 1) / (ar * (1 + tr))) * DEGREE
+
     def swept_angle(self, chord=0.25):
         '''
         The swept angle according to chord section `chord`
@@ -677,7 +663,36 @@ class Wing(BasicWing):
         ar  = self.g['aspect_ratio']
 
         return _swept_angle(chord, sa0, ar, tr)
-    
+
+    def sectional_chord_eta(self, eta: Union[float, np.ndarray]) -> float:
+        return 1 - (1 - self.g['tapper_ratio']) * eta
+
+    def get_normalized_sectional_geom(self):
+        '''
+        
+        normal_geom: nz, 3, nx
+        '''
+
+        from cst_modeling.basic import rotate
+
+        data = copy.deepcopy(self.surface_blocks[0][:, :, :3]) # nz, nx, 3
+        nz, nx, _ = data.shape
+        self.calc_planform()
+        alphas = self.g['AoA'] - self.twists
+        thicks = self.g['root_thickness'] * (1. - (1. - self.g['tip2root_thickness_ratio']) * np.linspace(0, 1, nz))
+        
+        elements = (self.leads.transpose(), alphas[np.newaxis, :], self.chords[np.newaxis, :], thicks[np.newaxis, :], 
+                        np.tile(self.g['cstu'][0][:, np.newaxis], (1, nz)), np.tile(self.g['cstl'][0][:, np.newaxis], (1, nz)),
+                        np.tile(np.array([self.g['Mach']])[:, np.newaxis], (1, nz)))
+        #     print([a.shape for a in elements])
+        deltaindexs  = np.concatenate(elements, axis=0).transpose()  # Ma
+        normal_geom = (data - self.leads[:, np.newaxis, :]) / self.chords[:, np.newaxis, np.newaxis]
+
+        for iz in range(nz):
+            normal_geom[iz] = np.stack(rotate(normal_geom[iz, :, 0], normal_geom[iz, :, 1], normal_geom[iz, :, 2], - self.twists[iz], axis='Z')).transpose()
+
+        return deltaindexs, normal_geom.transpose((0, 2, 1))
+
     #* =============================
     # below are functions for lifting-line theory
 
@@ -735,6 +750,14 @@ class KinkWing(Wing):
 
     def sectional_chord(self, y: Union[float, np.ndarray]):
         return self.sectional_chord_eta(y / self.g['half_span'])
+
+class NewKinkWing(BasicWing):
+    '''
+    This is for CRM-liked wings with varying parameters along spanwise
+    
+    '''
+    def __init__(self, paras = None, aoa = None, iscentric = False, normal_factors=(1, 150, 300)):
+        super().__init__(paras, aoa, iscentric, normal_factors)
 
 
 def interpolate_section(surface, y=None, eta=None, norm=False):
