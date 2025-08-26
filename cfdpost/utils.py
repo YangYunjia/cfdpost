@@ -65,6 +65,20 @@ def _xy_2_cl(dfp: np.ndarray, aoa: float) -> np.ndarray:
     # print(dfp.size(), _rot_metrix.size(), _aoa_rot(aoa).size())
     return np.einsum('p,prs,s->r', dfp, _rot_metrix, _aoa_rot(aoa))
 
+def _xy_2_cl_t(dfp: np.ndarray, aoa: float) -> np.ndarray:
+    '''
+    transfer fx, fy to CD, CL
+
+    param:
+    dfp:    (Fx, Fy), np.ndarray with size (2,)
+    aoa:    angle of attack, float
+
+    return:
+    ===
+    np.ndarray: (CD, CL)
+    '''
+    # print(dfp.size(), _rot_metrix.size(), _aoa_rot(aoa).size())
+    return np.einsum('pb,prs,s->rb', dfp, _rot_metrix, _aoa_rot(aoa))
 
 #* function to extract pressure force from 1-d pressure profile
 
