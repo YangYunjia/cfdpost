@@ -14,7 +14,7 @@ from matplotlib.gridspec import GridSpec
 from cst_modeling.section import cst_foil
 from cst_modeling.basic import rotate
 
-from typing import List, Union
+from typing import List, Union, Optional
 from cfdpost.utils import DEGREE, get_force_1d, get_moment_1d, get_force_2d, get_moment_2d, get_cellinfo_1d
 
 #* auxilary functions
@@ -171,7 +171,7 @@ class BasicWing():
                 blk[:r, :r, 17]     = data[2] / (1, self.normal_factors[1])[isnormed] # cftau
                 blk[:r, :r, 18]     = data[3] # cfnor
 
-    def read_formatted_surface(self, geometry: np.ndarray = None, data: np.ndarray = None, 
+    def read_formatted_surface(self, geometry: Optional[np.ndarray] = None, data: Optional[np.ndarray] = None, 
                                isnormed: bool = False, isxyz: bool = False, isinitg: bool = False):
         '''
         read np.ndarray data to the wing
@@ -264,7 +264,7 @@ class BasicWing():
             self._get_normal_cf(self.surface_blocks[0])
         return self.surface_blocks[0][:, :, 17]
         
-    def get_formatted_surface(self, keep_cen: bool = True):
+    def get_formatted_surface(self, keep_cen: bool = True) -> np.ndarray:
         '''
         get formatted surface data for model training
 
@@ -338,10 +338,23 @@ class BasicWing():
     
     def aero_force(self, vis=-1):
         
-        if self.cen:
-            r = -1
+        def get_blk(blk):
+            if self.cen:
+                cp = blk[:-1, :-1, 9]
+                cf = blk[:-1, :-1, 14:17]
+            else:
+                # interpolate
+                cen_blk = 0.25 * (blk[1:, 1:] + blk[1:, :-1] + blk[:-1, 1:] + blk[:-1, :-1])
+                cp = cen_blk[:, :, 9]
+                cf = cen_blk[:, :, 14:17]
+            return blk, cp, cf
+        
+        if vis == -1:
+            cf_sel = [14, 15, 16]
+        elif vis == 0:
+            cf_sel = []
         else:
-            raise NotImplementedError()
+            cf_sel = [17, 16]
         
         if vis == -1:
             cf_sel = [14, 15, 16]
@@ -352,14 +365,14 @@ class BasicWing():
         
         self.cl = np.zeros((3,))
         
-        blk = self.surface_blocks[0]
-        forces  = get_force_2d(geom=blk[:, :, :3], aoa=self.aoa, cp=blk[:r, :r, 9], cf=blk[:r, :r, cf_sel])
-        moments = get_moment_2d(geom=blk[:, :, :3], cp=blk[:r, :r, 9], cf=blk[:r, :r, cf_sel])
+        blk, cp, cf = get_blk(self.surface_blocks[0])
+        forces  = get_force_2d(geom=blk[:, :, :3], aoa=self.aoa, cp=cp, cf=cf)
+        moments = get_moment_2d(geom=blk[:, :, :3], cp=cp, cf=cf)
         
         if self.tip_blocks is not None:
-            blk = self.tip_blocks
-            forces_tip = get_force_2d(geom=blk[:, :, :3], aoa=self.aoa, cp=blk[:r, :r, 9], cf=blk[:r, :r, cf_sel])
-            moments_tip = get_moment_2d(geom=blk[:, :, :3], cp=blk[:r, :r, 9], cf=blk[:r, :r, cf_sel])
+            blk, cp, cf = get_blk(self.tip_blocks)
+            forces_tip = get_force_2d(geom=blk[:, :, :3], aoa=self.aoa, cp=cp, cf=cf)
+            moments_tip = get_moment_2d(geom=blk[:, :, :3], cp=cp, cf=cf)
             # print(forces, forces_tip)
             
             forces += forces_tip
@@ -853,8 +866,8 @@ def _plot_2d_wing(fig: Figure, surface, profile_surface=None, contour=4, vrange=
         for idx in range(len(profile_surface)):
             sec_p = interpolate_section(profile_surface[idx], eta=etas[i])
             ax.plot(sec_p[:, 0], sec_p[:, contour], c=colors[idx], ls=lss[idx])
-            if reverse_y < 0:
-                ax.invert_yaxis()
+        if reverse_y < 0:
+            ax.invert_yaxis()
 
 
 ##################
