@@ -42,13 +42,13 @@ _rot_metrix = np.array([[[1.0,0], [0,1.0]], [[0,-1.0], [1.0,0]]])
 
 #* function to rotate x-y to aoa
 
-def _aoa_rot(aoa: float) -> np.ndarray:
+def _aoa_rot(aoa: np.ndarray | float) -> np.ndarray:
     '''
     aoa is in size (B, ) with Deg.
     
     '''
-    aoa = aoa / DEGREE
-    return np.array([np.cos(aoa), -np.sin(aoa)])
+    aoa = np.asarray(aoa) / DEGREE
+    return np.stack([np.cos(aoa), -np.sin(aoa)], axis=-1)
 
 def _xy_2_cl(dfp: np.ndarray, aoa: float) -> np.ndarray:
     '''
@@ -63,22 +63,7 @@ def _xy_2_cl(dfp: np.ndarray, aoa: float) -> np.ndarray:
     np.ndarray: (CD, CL)
     '''
     # print(dfp.size(), _rot_metrix.size(), _aoa_rot(aoa).size())
-    return np.einsum('p,prs,s->r', dfp, _rot_metrix, _aoa_rot(aoa))
-
-def _xy_2_cl_t(dfp: np.ndarray, aoa: float) -> np.ndarray:
-    '''
-    transfer fx, fy to CD, CL
-
-    param:
-    dfp:    (Fx, Fy), np.ndarray with size (2,)
-    aoa:    angle of attack, float
-
-    return:
-    ===
-    np.ndarray: (CD, CL)
-    '''
-    # print(dfp.size(), _rot_metrix.size(), _aoa_rot(aoa).size())
-    return np.einsum('pb,prs,s->rb', dfp, _rot_metrix, _aoa_rot(aoa))
+    return np.einsum('...p,prs,...s->...r', dfp, _rot_metrix, _aoa_rot(aoa))
 
 #* function to extract pressure force from 1-d pressure profile
 
@@ -94,14 +79,9 @@ def get_dxyforce_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None) -> np
     
     '''
 
-    dr     = (geom[1:] - geom[:-1])
-    dfp_n  = cp.reshape((1, -1))
-    if cf is None:
-        dfv_t  = np.zeros_like(dfp_n)
-    else:
-        dfv_t = cf.reshape((1, -1))
-
-    dxy = np.einsum('lj,lpk,jk->jp', np.concatenate((dfv_t, -dfp_n), axis=0), _rot_metrix, dr)
+    dr     = (geom[..., 1:, :] - geom[..., :-1, :])
+    if cf is None: cf = np.zeros_like(cp)
+    dxy = np.einsum('...jl,lpk,...jk->...jp', np.stack((cf, -cp), axis=-1), _rot_metrix, dr)
 
     # if len(cf.shape) > 1: dxy += np.abs(dr) * cf
     
@@ -116,7 +96,7 @@ def get_xyforce_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None) -> np.
     ===
     `geom`:    The geometry (x, y), shape: (N, 2)
     
-    `profile`: The pressure profile, shape: (N, ); should be non_dimensional pressure profile by freestream condtion
+    `profile`: The pressure profile, shape: (N-1, ); should be non_dimensional pressure profile by freestream condtion
 
         Cp = (p - p_inf) / 0.5 * rho * U^2
         Cf = tau / 0.5 * rho * U^2
@@ -126,16 +106,15 @@ def get_xyforce_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None) -> np.
     np.ndarray: (Fx, Fy)
     '''
 
-    dr_tail = geom[0] - geom[-1]
-    dfp_n_tail = np.array([0., -0.5 * (cp[0] + cp[-1])])
-    
-    return np.sum(get_dxyforce_1d(geom, cp, cf), axis=0) + np.einsum('l,lpk,k', dfp_n_tail, _rot_metrix, dr_tail)
+    dr_tail = geom[..., 0, :] - geom[..., -1, :]
+    dfp_n_tail = np.stack([np.zeros_like(cp[..., 0]), -0.5 * (cp[..., 0] + cp[..., -1])], axis=-1)
+    return np.sum(get_dxyforce_1d(geom, cp, cf), axis=-2) + np.einsum('...l,lpk,...k->...p', dfp_n_tail, _rot_metrix, dr_tail)
 
 def get_moment_1d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None, ref_point: np.ndarray=np.array([0.25, 0])) -> np.ndarray:
 
     dxyforce = get_dxyforce_1d(geom, cp, cf)
-    r = 0.5 * (geom[:-1] + geom[1:])
-    return np.sum(dxyforce[:, 1] * (r[:, 0] - ref_point[0]) - dxyforce[:, 0] * (r[:, 1] - ref_point[1]))
+    r = 0.5 * (geom[..., :-1, :] + geom[..., 1:, :])
+    return np.sum(dxyforce[..., :, 1] * (r[..., :, 0] - ref_point[0]) - dxyforce[..., :, 0] * (r[..., :, 1] - ref_point[1]), axis=-1)
 
 def get_force_1d(geom: np.ndarray, aoa: float, cp: np.ndarray, cf: np.ndarray=None) -> np.ndarray:
     '''
