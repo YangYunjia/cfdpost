@@ -635,7 +635,7 @@ class Wing(BasicWing):
     
     def __init__(self, geometry: Union[list, np.ndarray, dict] = None, aoa: float = None, normal_factors: tuple = (1, 250, 200)) -> None:
         
-        super().__init__(paras=geometry, aoa=aoa, normal_factors=normal_factors)
+        super().__init__(paras=geometry, aoa=aoa, init_g=False, normal_factors=normal_factors)
         
         if geometry is not None:
             if isinstance(geometry, dict):   self.read_geometry(geometry)
