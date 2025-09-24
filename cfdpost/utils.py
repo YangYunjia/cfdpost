@@ -209,7 +209,7 @@ def get_dxyforce_2d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None) -> np
     n, a = get_cellinfo_2d(geom)
     dfp = cp[..., np.newaxis] * n * a[..., np.newaxis]
     
-    if not (cf is None or len(cf) == 0):
+    if not (cf is None or cf.shape[-1] == 0):
         dfp += (cf - np.sum(cf * n, axis=-1, keepdims=True) * n) * a[..., np.newaxis]
     
     return dfp

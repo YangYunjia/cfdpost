@@ -203,14 +203,15 @@ class BasicWing():
         if isnormed:
             v_names = ['cp', 'cft', 'cfz']
             for i in range(len(self.normal_factors)):
-                raw_data[self.store_variables[v_names[i]]] /= self.normal_factors[i]
+                if v_names[i] in self.store_variables.keys():
+                    raw_data[self.store_variables[v_names[i]]] /= self.normal_factors[i]
         
         blk.append(raw_data.transpose((1, 2, 0)))
 
-        if 'cfx' not in self.store_variables:
+        if 'cfx' not in self.store_variables and 'cft' in self.store_variables:
             self._get_xz_cf(blk)
 
-        if 'cft' not in self.store_variables:
+        if 'cft' not in self.store_variables and 'cfx' in self.store_variables:
             self._get_normal_cf(blk)
 
 
@@ -385,7 +386,7 @@ class BasicWing():
         ```
         remark: the order is changed on Mar 28, 2024 (bet. Cftau & cfz)
         '''
-        if not self.cf_expanded(self.surface_blocks[0]):
+        if 'cft' not in self.store_variables.keys():
             self._get_normal_cf(self.surface_blocks[0])
         
         if self.is_centric: raise NotImplementedError()
@@ -396,6 +397,16 @@ class BasicWing():
         data = np.concatenate((blk[0], blk[1][..., [self.store_variables['cp'], self.store_variables['cft'], self.store_variables['cfz']]]), axis=2)
         return data
 
+    @property
+    def geom(self) -> np.ndarray:
+        '''
+        return:
+        ===
+        `np.ndarray` => (nz, ni, 3)
+        '''
+        if self.more_than_one_block: raise NotImplementedError
+        return self.surface_blocks[0][0]
+    
     @property
     def cp(self) -> np.ndarray:
         '''
@@ -694,9 +705,8 @@ class Wing(BasicWing):
         blockx = np.outer(xxs[0], np.linspace(1, 0, nz)) + np.outer(xxs[1], np.linspace(0, 1, nz))
         blocky = np.outer(yys[0], np.linspace(1, 0, nz)) + np.outer(yys[1], np.linspace(0, 1, nz))
         
-        new_block = np.zeros((nz, 2*nx-1, 19))
-        new_block[:, :, :3] = np.stack((blockx, blocky, blockz)).transpose((2, 1, 0))
-        self.surface_blocks.append(new_block)
+        new_block = np.stack((blockx, blocky, blockz)).transpose((2, 1, 0))
+        self.surface_blocks.append([new_block])
 
     def reconstruct_strictx_surface_grids(self, cst_us, cst_ls, troot, nx, nzs, tail=0.004):
         '''
@@ -725,7 +735,7 @@ class Wing(BasicWing):
         tr  = self.g['tapper_ratio']
         ar  = self.g['aspect_ratio']
 
-        return _swept_angle(chord, sa0, ar, tr)
+        return self._swept_angle(chord, sa0, ar, tr)
 
     def sectional_chord_eta(self, eta: Union[float, np.ndarray]) -> float:
         return 1 - (1 - self.g['tapper_ratio']) * eta
@@ -738,7 +748,7 @@ class Wing(BasicWing):
 
         from cst_modeling.basic import rotate
 
-        data = copy.deepcopy(self.surface_blocks[0][:, :, :3]) # nz, nx, 3
+        data = copy.deepcopy(self.surface_blocks[0][0][:, :, :3]) # nz, nx, 3
         nz, nx, _ = data.shape
         self.calc_planform()
         alphas = self.g['AoA'] - self.twists
