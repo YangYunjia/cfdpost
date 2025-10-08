@@ -3,7 +3,7 @@
 import numpy as np
 from scipy.interpolate import interp1d, splev, splrep
 from scipy.optimize import leastsq
-
+from typing import Union, Optional, List, Tuple
 
 class Fitting():
     def __init__(self, X, y, mod='fit', order=4):
@@ -42,7 +42,7 @@ _rot_metrix = np.array([[[1.0,0], [0,1.0]], [[0,-1.0], [1.0,0]]])
 
 #* function to rotate x-y to aoa
 
-def _aoa_rot(aoa: np.ndarray | float) -> np.ndarray:
+def _aoa_rot(aoa: Union[float, np.ndarray]) -> np.ndarray:
     '''
     aoa is in size (B, ) with Deg.
     
@@ -64,6 +64,23 @@ def _xy_2_cl(dfp: np.ndarray, aoa: float) -> np.ndarray:
     '''
     # print(dfp.size(), _rot_metrix.size(), _aoa_rot(aoa).size())
     return np.einsum('...p,prs,...s->...r', dfp, _rot_metrix, _aoa_rot(aoa))
+
+def _xy_2_cl_c(dfp: np.ndarray, aoa: np.ndarray) -> np.ndarray:
+    '''
+    batch version of _xy_2_cl
+    
+    transfer fx, fy to CD, CL
+
+    param:
+    dfp:    (Fx, Fy), Tensor with size (B, 2,)
+    aoa:    angle of attack, Tensor with size (B, )
+
+    return:
+    ===
+    Tensor: (CD, CL),  with size (B, 2)
+    '''
+    # print(dfp.shape, _rot_metrix.shape, aoa.shape, _aoa_rot_t(aoa).shape)
+    return np.einsum('bp,prs,bs->br', dfp,  _rot_metrix, _aoa_rot(aoa))
 
 #* function to extract pressure force from 1-d pressure profile
 
@@ -138,7 +155,7 @@ def get_force_1d(geom: np.ndarray, aoa: float, cp: np.ndarray, cf: np.ndarray=No
     dfp = get_xyforce_1d(geom, cp, cf)
     return _xy_2_cl(dfp, aoa)
 
-def get_cellinfo_1d(geom: np.ndarray, iscentric=False) -> np.ndarray:
+def get_cellinfo_1d(geom: np.ndarray, iscentric=False) -> Tuple[np.ndarray]:
     '''
     params:
     ===
@@ -170,34 +187,34 @@ def get_cellinfo_2d(geom: np.ndarray) -> np.ndarray:
     '''
     params:
     ===
-    `geom`:  The geometry (x, y, z), shape: (I, J, 3)
+    `geom`:  The geometry (x, y, z), shape: (?, I, J, 3)
 
     returns:
     ===
-    `normals`: shape: (I-1, J-1, 3)
-    `areas`  : shape: (I-1, J-1)
+    `normals`: shape: (?, I-1, J-1, 3)
+    `areas`  : shape: (?, I-1, J-1)
     '''
     
     # get corner points（p0, p1, p2, p3）
-    p0 = geom[:-1, :-1] # SW
-    p1 = geom[:-1, 1:]  # SE
-    p2 = geom[1:, 1:]   # NW
-    p3 = geom[1:, :-1]  # NE
+    p0 = geom[..., :-1, :-1, :] # SW
+    p1 = geom[..., :-1, 1:, :]  # SE
+    p2 = geom[..., 1:, 1:, :]   # NW
+    p3 = geom[..., 1:, :-1, :]  # NE
 
     # calculate two groups of normal vector and average
     # normals = 0.5 * (np.cross(p1 - p0, p3 - p0) + np.cross(p2 - p1, p0 - p1))
     # normals = 0.5 * (np.cross(p1 - p0, p3 - p0) + np.cross(p3 - p2, p1 - p2))
     # normals = 0.25 * (np.cross(p1 - p0, p3 - p0) + np.cross(p3 - p2, p1 - p2) + np.cross(p2 - p1, p0 - p1) + np.cross(p0 - p3, p2 - p3))
-    normals = np.cross(p2 - p0, p3 - p1)
+    normals = np.cross(p2 - p0, p3 - p1, axis=-1)
     # areas = 0.5 * np.linalg.norm(np.cross(p2 - p0, p3 - p1), axis=-1)
-    areas   = 0.5 * (np.linalg.norm(np.cross(p1 - p0, p2 - p0), axis=-1) + np.linalg.norm(np.cross(p2 - p0, p3 - p0), axis=-1))
+    areas   = 0.5 * (np.linalg.norm(np.cross(p1 - p0, p2 - p0, axis=-1), axis=-1) + np.linalg.norm(np.cross(p2 - p0, p3 - p0, axis=-1), axis=-1))
 
     # normalization
     normals /= (np.linalg.norm(normals, axis=-1, keepdims=True) + 1e-20)
     # print(np.sum(normals * areas[..., np.newaxis], axis=(0,1)))
     return normals, areas    
 
-def get_dxyforce_2d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None) -> np.ndarray:
+def get_dxyforce_2d(geom: Union[np.ndarray, List[np.ndarray]], cp: np.ndarray, cf: np.ndarray=None) -> np.ndarray:
     '''
         
     return:
@@ -206,24 +223,28 @@ def get_dxyforce_2d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None) -> np
     
     '''
     # calculate normal vector
-    n, a = get_cellinfo_2d(geom)
-    dfp = cp[..., np.newaxis] * n * a[..., np.newaxis]
+    if isinstance(geom, list):
+        n, a = geom
+    else:
+        n, a = get_cellinfo_2d(geom)
+
+    dfp = cp[..., None] * n * a[..., None]
     
-    if not (cf is None or cf.shape[-1] == 0):
-        dfp += (cf - np.sum(cf * n, axis=-1, keepdims=True) * n) * a[..., np.newaxis]
+    if not (cf is None or len(cf) == 0):
+        dfp += (cf - np.sum(cf * n, axis=-1, keepdims=True) * n) * a[..., None]
     
     return dfp
 
-def get_xyforce_2d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None) -> np.ndarray:
+def get_xyforce_2d(geom: Union[np.ndarray, List[np.ndarray]], cp: np.ndarray, cf: np.ndarray=None) -> np.ndarray:
     '''
     
     return:
     ===
     np.ndarray: (CX, CY, CZ)
     '''
-    return np.sum(get_dxyforce_2d(geom, cp, cf), axis=(0,1))
+    return np.sum(get_dxyforce_2d(geom, cp, cf), axis=(-3,-2))
 
-def get_force_2d(geom: np.ndarray, aoa: float, cp: np.ndarray, cf: np.ndarray=None) -> np.ndarray:
+def get_force_2d(geom: Union[np.ndarray, List[np.ndarray]], aoa: Union[float, np.ndarray], cp: np.ndarray, cf: np.ndarray=None) -> np.ndarray:
     '''
     integrate lift and drag from 2D surface data
     
@@ -242,7 +263,10 @@ def get_force_2d(geom: np.ndarray, aoa: float, cp: np.ndarray, cf: np.ndarray=No
     np.ndarray: (CD, CL, CZ)
     '''
     dfp = get_xyforce_2d(geom, cp, cf)
-    dfp[:2] = _xy_2_cl(dfp[:2], aoa)
+    if isinstance(aoa, float):
+        dfp[..., :2] = _xy_2_cl(dfp[..., :2], aoa)
+    else:
+        dfp[..., :2] = _xy_2_cl_c(dfp[..., :2], aoa)
     return dfp
 
 def get_moment_2d(geom: np.ndarray, cp: np.ndarray, cf: np.ndarray=None, ref_point: np.ndarray=np.array([0.25, 0, 0])) -> np.ndarray:
