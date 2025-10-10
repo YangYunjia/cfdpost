@@ -10,11 +10,8 @@ from matplotlib import colormaps as cm
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 from matplotlib.gridspec import GridSpec
-
-from cst_modeling.section import cst_foil
-from cst_modeling.basic import rotate
-
 from typing import List, Union, Optional
+from cfdpost.modeling import cst_foil, rotate
 from cfdpost.utils import DEGREE, get_force_1d, get_moment_1d, get_force_2d, get_moment_2d, get_cellinfo_1d
 
 #* auxilary functions

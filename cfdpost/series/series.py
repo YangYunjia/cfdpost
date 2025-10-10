@@ -13,7 +13,6 @@ import re
 from sklearn.linear_model import LinearRegression
 from scipy.interpolate import PchipInterpolator as pchip
 
-from cst_modeling.foil import cst_foil
 from cfdpost.cfdresult import cfl3d
 from cfdpost.section.physical import PhysicalSec
 from cfdpost.utils import Fitting
