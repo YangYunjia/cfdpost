@@ -341,11 +341,16 @@ class BasicWing():
         if 'cft' not in self.store_variables.keys():
             self._get_normal_cf(self.surface_blocks[0])
         
-        if self.is_centric: raise NotImplementedError()
-
-        if not keep_cen:  raise NotImplementedError()
-        
         blk = self.surface_blocks[0]
+
+        if self.is_centric:
+            if keep_cen:
+                geom = 0.25 * (blk[0][1:, 1:] + blk[0][1:, :-1] + blk[0][:-1, 1:] + blk[0][:-1, :-1])
+            else:
+                geom = blk[0]
+                                                                
+            return geom, blk[1][..., [self.store_variables['cp'], self.store_variables['cft'], self.store_variables['cfz']]]
+        
         data = np.concatenate((blk[0], blk[1][..., [self.store_variables['cp'], self.store_variables['cft'], self.store_variables['cfz']]]), axis=2)
         return data
 
@@ -567,13 +572,13 @@ class BasicParaWing(BasicWing):
     Base class for parameterized wings
     
     '''
-    _format_geometry_indexs = {'full': {}}           # include others
+    _format_geometry_indexs = {'full': {}}           # formatted input rules
     _must_keys = []
 
 
-    def __init__(self, geometry: Union[list, np.ndarray, dict] = None, aoa: float = None, normal_factors: tuple = (1, 250, 200)) -> None:
+    def __init__(self, geometry: Union[list, np.ndarray, dict] = None, aoa: float = None, iscentric: bool = False, normal_factors: tuple = (1, 250, 200)) -> None:
         
-        super().__init__(paras=None, aoa=aoa, normal_factors=normal_factors)
+        super().__init__(paras=None, aoa=aoa, iscentric=iscentric, normal_factors=normal_factors)
         
         if geometry is not None:
             if isinstance(geometry, dict):   self.read_geometry(geometry)
@@ -581,7 +586,7 @@ class BasicParaWing(BasicWing):
 
     def read_geometry(self, geometry: dict) -> dict:
         '''
-        read geometry from parameters
+        read geometry from parameter dictionary
         '''
 
         if sum([kk not in geometry.keys() for kk in self.__class__._must_keys]) > 0:
@@ -593,7 +598,7 @@ class BasicParaWing(BasicWing):
 
     def read_formatted_geometry(self, geometry: np.ndarray, index_type: str = 'full') -> dict:
         '''
-        read formatted geometries given the _format_geometry_indexs
+        read formatted array geometries given the _format_geometry_indexs
         '''
         
         wing_param = {}
@@ -621,7 +626,26 @@ class BasicParaWing(BasicWing):
     def calculate_ref_area(self):
         self.__class__._calculate_ref_area(self.g)
 
+    @classmethod
+    def _reconstruct_surface_grids(cls, g: dict, nx: int, nzs: List[int], tail: float = 0.004) -> np.ndarray:
+        '''
+        reconstruct surface grid points 
+        
+        This is not the same grid to CFD simulation, but rather the reference grid for ML models
 
+        '''
+
+        raise NotImplementedError()
+    
+    def reconstruct_surface_grids(self, nx: int, nzs: List[int], tail: float = 0.004) -> None:
+        '''
+        reconstruct surface grid points 
+        
+        This is not the same grid to CFD simulation, but rather the reference grid for ML models
+
+        '''
+        new_block = self.__class__._reconstruct_surface_grids(self.g, nx, nzs, tail)
+        self.surface_blocks.append([new_block])
 
 def interpolate_section(surface, y=None, eta=None, norm=False):
 

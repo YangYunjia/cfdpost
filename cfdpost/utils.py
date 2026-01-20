@@ -79,7 +79,7 @@ def _xy_2_cl_c(dfp: np.ndarray, aoa: np.ndarray) -> np.ndarray:
     ===
     Tensor: (CD, CL),  with size (B, 2)
     '''
-    # print(dfp.shape, _rot_metrix.shape, aoa.shape, _aoa_rot_t(aoa).shape)
+    # print(dfp.shape, _rot_metrix.shape, aoa.shape, _aoa_rot(aoa).shape)
     return np.einsum('bp,prs,bs->br', dfp,  _rot_metrix, _aoa_rot(aoa))
 
 #* function to extract pressure force from 1-d pressure profile
@@ -262,8 +262,9 @@ def get_force_2d(geom: Union[np.ndarray, List[np.ndarray]], aoa: Union[float, np
     ===
     np.ndarray: (CD, CL, CZ)
     '''
+    # print(geom.shape, aoa, cp.shape, cf.shape)
     dfp = get_xyforce_2d(geom, cp, cf)
-    if isinstance(aoa, float):
+    if isinstance(aoa, (int, float)):
         dfp[..., :2] = _xy_2_cl(dfp[..., :2], aoa)
     else:
         dfp[..., :2] = _xy_2_cl_c(dfp[..., :2], aoa)

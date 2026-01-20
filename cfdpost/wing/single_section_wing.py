@@ -120,7 +120,9 @@ class Wing(BasicParaWing):
     @classmethod
     def _reconstruct_surface_grids(cls, g: dict, nx, nzs, tail=0.004):
         '''
-        reconstruct surface grid points (same to generate volume grid points in CFD simulations)
+        reconstruct surface grid points 
+        
+        This is not the same grid to CFD simulation, but rather the reference grid for ML models
 
         '''
 
@@ -134,12 +136,7 @@ class Wing(BasicParaWing):
         blockx = np.outer(xxs[0], np.linspace(1, 0, nz)) + np.outer(xxs[1], np.linspace(0, 1, nz))
         blocky = np.outer(yys[0], np.linspace(1, 0, nz)) + np.outer(yys[1], np.linspace(0, 1, nz))
         
-        return np.stack((blockx, blocky, blockz)).transpose((2, 1, 0))
-    
-    def reconstruct_surface_grids(self, nx, nzs, tail=0.004):
-
-        new_block = self.__class__._reconstruct_surface_grids(self.g, nx, nzs, tail)
-        self.surface_blocks.append([new_block])
+        return np.stack((blockx, blocky, blockz)).transpose((2, 1, 0)) 
 
     def reconstruct_strictx_surface_grids(self, cst_us, cst_ls, troot, nx, nzs, tail=0.004):
         '''
